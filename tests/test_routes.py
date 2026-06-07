@@ -216,6 +216,14 @@ class TestTasksRoute:
         r = client.post("/api/tasks", json={})
         assert r.status_code == 422
 
+    def test_empty_content_returns_422(self):
+        r = client.post("/api/tasks", json={"content": "   "})
+        assert r.status_code == 422
+
+    def test_content_too_long_returns_422(self):
+        r = client.post("/api/tasks", json={"content": "x" * 501})
+        assert r.status_code == 422
+
     def test_error_from_service_propagates(self):
         err = {"error": "no_token", "detail": "TODOIST_API_TOKEN is not set"}
         with patch("backend.services.todoist.create_task", new_callable=AsyncMock, return_value=err):
@@ -259,6 +267,18 @@ class TestCloseTaskRoute:
             r = client.post("/api/tasks/bad-id/close")
         assert r.status_code == 200
         assert r.json()["error"] == "http_error"
+
+
+# ---------------------------------------------------------------------------
+# GET /healthz
+# ---------------------------------------------------------------------------
+
+
+class TestHealthz:
+    def test_returns_ok(self):
+        r = client.get("/healthz")
+        assert r.status_code == 200
+        assert r.json() == {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------

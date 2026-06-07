@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 
 import httpx
 
 _BASE = "https://api.todoist.com/rest/v2"
+_FILTER = "today | overdue"  # shared filter used by tasks() and check()
+_log = logging.getLogger(__name__)
 
 
 def _token() -> str:
@@ -21,11 +24,12 @@ async def tasks() -> list[dict]:
             r = await client.get(
                 f"{_BASE}/tasks",
                 headers={"Authorization": f"Bearer {token}"},
-                params={"filter": "today | overdue"},
+                params={"filter": _FILTER},
             )
             r.raise_for_status()
             return r.json()
     except Exception:
+        _log.warning("todoist.tasks() failed", exc_info=True)
         return []
 
 
@@ -51,8 +55,10 @@ async def create_task(content: str, due_string: str = "today") -> dict:
             r.raise_for_status()
             return r.json()
     except httpx.HTTPStatusError as exc:
+        _log.warning("todoist.create_task() HTTP %d", exc.response.status_code)
         return {"error": "http_error", "detail": f"HTTP {exc.response.status_code}"}
     except Exception as exc:
+        _log.warning("todoist.create_task() failed: %s", exc)
         return {"error": "request_failed", "detail": str(exc)[:80]}
 
 
@@ -73,8 +79,10 @@ async def close_task(task_id: str) -> dict:
             r.raise_for_status()
             return {"ok": True}
     except httpx.HTTPStatusError as exc:
+        _log.warning("todoist.close_task(%s) HTTP %d", task_id, exc.response.status_code)
         return {"error": "http_error", "detail": f"HTTP {exc.response.status_code}"}
     except Exception as exc:
+        _log.warning("todoist.close_task(%s) failed: %s", task_id, exc)
         return {"error": "request_failed", "detail": str(exc)[:80]}
 
 
@@ -88,7 +96,7 @@ async def check() -> dict:
             r = await client.get(
                 f"{_BASE}/tasks",
                 headers={"Authorization": f"Bearer {token}"},
-                params={"filter": "today | overdue"},
+                params={"filter": _FILTER},
             )
             r.raise_for_status()
             count = len(r.json())

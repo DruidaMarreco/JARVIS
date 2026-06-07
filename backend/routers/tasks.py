@@ -1,16 +1,28 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from ..services import todoist
 
 router = APIRouter()
 
+_MAX_CONTENT = 500  # Todoist's own limit is ~500 chars
+
 
 class TaskRequest(BaseModel):
     content: str
     due_string: str = "today"
+
+    @field_validator("content")
+    @classmethod
+    def content_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("content must not be empty or whitespace")
+        if len(v) > _MAX_CONTENT:
+            raise ValueError(f"content too long (max {_MAX_CONTENT} characters)")
+        return v
 
 
 @router.get("/tasks")
