@@ -1,4 +1,4 @@
-.PHONY: install dev lint fmt
+.PHONY: install dev test lint fmt
 
 install:
 	uv sync
@@ -6,10 +6,14 @@ install:
 dev:
 	uv run uvicorn backend.main:app --reload --port 7000
 
+test:
+	uv run pytest tests/ -q
+
 lint:
-	uv run ruff check backend
-	uv run ty check backend
+	uv run ruff check backend tests
+	uv run black --check backend tests
+	uv run ty check backend --error all
 
 fmt:
-	uv run black backend
-	uv run ruff check --fix backend
+	uv run black backend tests
+	uv run ruff check --fix backend tests
