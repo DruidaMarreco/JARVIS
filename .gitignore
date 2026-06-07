@@ -6,5 +6,16 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.python-version
+
+# Env
+.env
+
 # Claude
 .claude/settings.local.json

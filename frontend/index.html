@@ -64,15 +64,35 @@ body::before{
 .dot.ok{background:var(--teal);box-shadow:0 0 8px var(--teal-dim)}
 .dot.warn{background:var(--amber);box-shadow:0 0 8px var(--amber-dim)}
 .dot.idle{background:var(--text-faint)}
+.chip-detail{color:var(--text-faint);margin-left:2px}
 
 /* ---- command bar ---- */
-.cmd{position:relative;margin:0 4px 36px}
-.cmd input{width:100%;font-family:var(--mono);font-size:14px;color:var(--text);
-  background:var(--panel);border:1px solid var(--line-hi);border-radius:9px;
+.cmd{position:relative;margin:0 4px 12px}
+.cmd form{display:flex;gap:0}
+.cmd input{flex:1;font-family:var(--mono);font-size:14px;color:var(--text);
+  background:var(--panel);border:1px solid var(--line-hi);border-radius:9px 0 0 9px;
   padding:15px 18px 15px 46px;letter-spacing:.03em;outline:none;transition:border-color .15s,box-shadow .15s}
 .cmd input::placeholder{color:var(--text-faint)}
 .cmd input:focus{border-color:var(--amber-dim);box-shadow:0 0 0 3px var(--amber-glow)}
-.cmd .ico{position:absolute;left:16px;top:50%;transform:translateY(-50%);color:var(--text-faint);font-size:18px}
+.cmd .ico{position:absolute;left:16px;top:50%;transform:translateY(-50%);color:var(--text-faint);font-size:18px;pointer-events:none}
+.cmd button{font-family:var(--mono);font-size:12px;letter-spacing:.08em;color:var(--bg);
+  background:var(--amber);border:none;border-radius:0 9px 9px 0;padding:0 20px;cursor:pointer;
+  transition:background .15s;white-space:nowrap}
+.cmd button:hover{background:#c8923e}
+.cmd button:disabled{background:var(--amber-dim);cursor:not-allowed}
+
+/* ---- reply panel ---- */
+.reply{margin:0 4px 28px;border:1px solid var(--line-hi);border-radius:9px;
+  background:var(--panel);overflow:hidden;display:none}
+.reply.visible{display:block}
+.reply-head{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--amber);padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel-hi)}
+.reply-body{font-family:var(--body);font-size:14px;line-height:1.7;color:var(--text-dim);
+  padding:14px 16px;white-space:pre-wrap;max-height:260px;overflow-y:auto}
+.reply-body.loading{color:var(--text-faint);font-family:var(--mono);font-size:12px}
+.reply-actions{font-family:var(--mono);font-size:10px;color:var(--text-faint);padding:8px 16px;
+  border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap}
+.reply-action-item{display:flex;align-items:center;gap:6px}
 
 /* ---- groups ---- */
 .group{margin-bottom:34px}
@@ -121,7 +141,7 @@ body::before{
       <div class="brand-mark" aria-hidden="true"></div>
       <div>
         <div class="brand-name">JARVIS</div>
-        <div class="brand-sub">Central Interface · v0.1</div>
+        <div class="brand-sub">Central Interface · v0.2</div>
       </div>
     </div>
     <div class="clockbox">
@@ -135,11 +155,22 @@ body::before{
     <p id="tagline">All systems nominal · select a module to engage</p>
   </section>
 
-  <div class="status" id="status"></div>
+  <div class="status" id="status">
+    <div class="chip"><span class="dot idle"></span>Loading status…</div>
+  </div>
 
   <div class="cmd">
     <span class="ico" aria-hidden="true">⌕</span>
-    <input type="text" id="filter" placeholder="Search modules…  (type to filter)" aria-label="Search modules">
+    <form id="cmd-form">
+      <input type="text" id="filter" placeholder="Ask Hey Claude or search modules…  (/ to focus)" aria-label="Command input">
+      <button type="submit" id="ask-btn">Ask →</button>
+    </form>
+  </div>
+
+  <div class="reply" id="reply">
+    <div class="reply-head">Hey Claude</div>
+    <div class="reply-body" id="reply-body"></div>
+    <div class="reply-actions" id="reply-actions"></div>
   </div>
 
   <main id="board"></main>
@@ -147,21 +178,19 @@ body::before{
 
   <footer class="foot">
     <span>SIMÃO · PERSONAL OPS DECK</span>
-    <span>Edit the <a href="#" onclick="return false">APPS</a> array in this file to add modules</span>
+    <span><a href="https://github.com/DruidaMarreco/JARVIS" target="_blank" rel="noopener">github.com/DruidaMarreco/JARVIS</a></span>
   </footer>
 
 </div>
 
 <script>
 /* ============================================================
-   CENTRAL INTERFACE — module registry
-   Add an app = add one object. group creates the section.
-   Replace REPO URLs with your own GitHub paths.
+   Module registry — add an object to add a tile.
    ============================================================ */
 const APPS = [
   // —— COMMAND ——
   { group:"Command", icon:"◆", name:"Claude", desc:"Primary assistant", url:"https://claude.ai" },
-  { group:"Command", icon:"◉", name:"Hey Claude", desc:"Voice assistant · in build", url:"#" },
+  { group:"Command", icon:"◉", name:"Hey Claude", desc:"Voice assistant · local", url:"http://localhost:8000" },
   { group:"Command", icon:"⬡", name:"Skills Library", desc:"57+ custom skills", url:"#" },
 
   // —— DAILY OPS ——
@@ -172,16 +201,16 @@ const APPS = [
 
   // —— KNOWLEDGE & FILES ——
   { group:"Knowledge & Files", icon:"⛁", name:"Google Drive", desc:"Cloud storage", url:"https://drive.google.com" },
-  { group:"Knowledge & Files", icon:"▤", name:"Knowledge Base", desc:"KB v1.4 · in Drive", url:"https://drive.google.com" },
+  { group:"Knowledge & Files", icon:"▤", name:"Knowledge Base", desc:"KB · in Drive", url:"https://drive.google.com" },
 
   // —— HEALTH & FITNESS ——
-  { group:"Health & Fitness", icon:"❤", name:"Complete Nutrition", desc:"Repo · edit URL", url:"https://github.com" },
+  { group:"Health & Fitness", icon:"❤", name:"Complete Nutrition", desc:"Local app", url:"#" },
   { group:"Health & Fitness", icon:"➤", name:"Strava", desc:"Training log", url:"https://www.strava.com" },
 
   // —— BUILD ——
-  { group:"Build", icon:"⌬", name:"GitHub", desc:"All repositories", url:"https://github.com" },
+  { group:"Build", icon:"⌬", name:"GitHub", desc:"All repositories", url:"https://github.com/DruidaMarreco" },
   { group:"Build", icon:"⚙", name:"Postman", desc:"API testing", url:"https://www.postman.com" },
-  { group:"Build", icon:"▸", name:"Claude Code", desc:"Agentic CLI · setup", url:"https://docs.claude.com/en/docs/claude-code" },
+  { group:"Build", icon:"▸", name:"Claude Code", desc:"Agentic CLI", url:"https://docs.anthropic.com/en/docs/claude-code" },
   { group:"Build", icon:"☁", name:"Azure / MS Learn", desc:"AZ-900 → AZ-104", url:"https://learn.microsoft.com/credentials/certifications/azure-fundamentals/" },
 
   // —— COMMS ——
@@ -195,72 +224,144 @@ const APPS = [
 
 const ORDER = ["Command","Daily Ops","Knowledge & Files","Health & Fitness","Build","Comms","Media"];
 
-const STATUS = [
-  { label:"KB v1.4 synced", state:"ok" },
-  { label:"Strava · no data", state:"warn" },
-  { label:"Claude Code · not installed", state:"warn" },
-  { label:"Hey Claude · pending build", state:"idle" },
-];
-
-/* ---- render status ---- */
-const statusEl = document.getElementById('status');
-STATUS.forEach(s=>{
-  const c=document.createElement('div'); c.className='chip';
-  c.innerHTML=`<span class="dot ${s.state}"></span>${s.label}`;
-  statusEl.appendChild(c);
-});
+/* ---- status (live from /api/status) ---- */
+async function loadStatus() {
+  const el = document.getElementById('status');
+  try {
+    const r = await fetch('/api/status');
+    const chips = await r.json();
+    el.innerHTML = '';
+    chips.forEach(s => {
+      const c = document.createElement('div');
+      c.className = 'chip';
+      c.innerHTML = `<span class="dot ${s.state}"></span>${s.label}<span class="chip-detail">· ${s.detail}</span>`;
+      el.appendChild(c);
+    });
+  } catch {
+    el.innerHTML = '<div class="chip"><span class="dot warn"></span>Status unavailable</div>';
+  }
+}
+loadStatus();
 
 /* ---- render board ---- */
 const board = document.getElementById('board');
-function render(filter=""){
-  board.innerHTML="";
-  const q=filter.trim().toLowerCase();
-  let shown=0, delay=0;
-  ORDER.forEach(g=>{
-    const items=APPS.filter(a=>a.group===g &&
-      (a.name.toLowerCase().includes(q)||a.desc.toLowerCase().includes(q)||g.toLowerCase().includes(q)));
-    if(!items.length) return;
-    const sec=document.createElement('section'); sec.className='group';
-    sec.innerHTML=`<div class="group-head"><span class="group-title">${g}</span>
+function render(filter = '') {
+  board.innerHTML = '';
+  const q = filter.trim().toLowerCase();
+  let shown = 0, delay = 0;
+  ORDER.forEach(g => {
+    const items = APPS.filter(a => a.group === g &&
+      (a.name.toLowerCase().includes(q) || a.desc.toLowerCase().includes(q) || g.toLowerCase().includes(q)));
+    if (!items.length) return;
+    const sec = document.createElement('section');
+    sec.className = 'group';
+    sec.innerHTML = `<div class="group-head"><span class="group-title">${g}</span>
       <span class="group-line"></span><span class="group-count">${items.length} mod</span></div>`;
-    const grid=document.createElement('div'); grid.className='grid';
-    items.forEach(a=>{
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    items.forEach(a => {
       shown++;
-      const t=document.createElement('a');
-      t.className='tile'; t.href=a.url;
-      if(a.url!=="#"){ t.target="_blank"; t.rel="noopener"; }
-      t.setAttribute('aria-label',`${a.name} — ${a.desc}`);
-      t.style.animationDelay=(delay++ *0.03)+"s";
-      t.innerHTML=`<span class="tile-arrow" aria-hidden="true">↗</span>
+      const t = document.createElement('a');
+      t.className = 'tile';
+      t.href = a.url;
+      if (a.url !== '#') { t.target = '_blank'; t.rel = 'noopener'; }
+      t.setAttribute('aria-label', `${a.name} — ${a.desc}`);
+      t.style.animationDelay = (delay++ * 0.03) + 's';
+      t.innerHTML = `<span class="tile-arrow" aria-hidden="true">↗</span>
         <span class="tile-ico" aria-hidden="true">${a.icon}</span>
         <span class="tile-name">${a.name}</span>
         <span class="tile-desc">${a.desc}</span>`;
       grid.appendChild(t);
     });
-    sec.appendChild(grid); board.appendChild(sec);
+    sec.appendChild(grid);
+    board.appendChild(sec);
   });
-  document.getElementById('empty').style.display = shown? "none":"block";
+  document.getElementById('empty').style.display = shown ? 'none' : 'block';
 }
 render();
-document.getElementById('filter').addEventListener('input',e=>render(e.target.value));
+
+/* ---- command bar ---- */
+const filterInput = document.getElementById('filter');
+const replyPanel = document.getElementById('reply');
+const replyBody = document.getElementById('reply-body');
+const replyActions = document.getElementById('reply-actions');
+const askBtn = document.getElementById('ask-btn');
+
+// typing → filter tiles (no submit yet)
+filterInput.addEventListener('input', e => {
+  const v = e.target.value;
+  // Only filter if no explicit ask submitted
+  if (!replyPanel.classList.contains('visible')) {
+    render(v);
+  }
+});
+
+document.getElementById('cmd-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const query = filterInput.value.trim();
+  if (!query) return;
+
+  // Show loading
+  replyPanel.classList.add('visible');
+  replyBody.className = 'reply-body loading';
+  replyBody.textContent = 'Routing to Hey Claude…';
+  replyActions.innerHTML = '';
+  askBtn.disabled = true;
+  render(''); // clear tile filter while waiting
+
+  try {
+    const r = await fetch('/api/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    const data = await r.json();
+
+    replyBody.className = 'reply-body';
+    replyBody.textContent = data.reply || '(no reply)';
+
+    // Show tool actions if any
+    if (data.events && data.events.length) {
+      replyActions.innerHTML = data.events
+        .filter(ev => ev.type === 'tool_use')
+        .map(ev => `<span class="reply-action-item">🔧 ${ev.name}</span>`)
+        .join('');
+    }
+  } catch (err) {
+    replyBody.className = 'reply-body';
+    replyBody.textContent = 'Error reaching Hey Claude: ' + err;
+  } finally {
+    askBtn.disabled = false;
+  }
+});
+
+// Esc clears the reply panel and resets tiles
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && replyPanel.classList.contains('visible')) {
+    replyPanel.classList.remove('visible');
+    filterInput.value = '';
+    render('');
+  }
+  if (e.key === '/' && document.activeElement.id !== 'filter') {
+    e.preventDefault();
+    filterInput.focus();
+  }
+});
 
 /* ---- clock + greeting ---- */
-function tick(){
-  const d=new Date();
-  const p=n=>String(n).padStart(2,'0');
-  document.getElementById('clock').textContent=`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-  document.getElementById('date').textContent=
-    d.toLocaleDateString('en-GB',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
-  const h=d.getHours();
-  const g = h<6?"Still up, ":h<12?"Good morning, ":h<19?"Good afternoon, ":"Good evening, ";
-  document.getElementById('greeting').innerHTML=`${g}<span>Simão</span>`;
+function tick() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  document.getElementById('clock').textContent =
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  document.getElementById('date').textContent =
+    d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+  const h = d.getHours();
+  const g = h < 6 ? 'Still up, ' : h < 12 ? 'Good morning, ' : h < 19 ? 'Good afternoon, ' : 'Good evening, ';
+  document.getElementById('greeting').innerHTML = `${g}<span>Simão</span>`;
 }
-tick(); setInterval(tick,1000);
-
-/* ---- keyboard: "/" focuses search ---- */
-document.addEventListener('keydown',e=>{
-  if(e.key==='/' && document.activeElement.id!=='filter'){ e.preventDefault(); document.getElementById('filter').focus(); }
-});
+tick();
+setInterval(tick, 1000);
 </script>
 </body>
 </html>
