@@ -161,6 +161,25 @@ body::before{
 .exchange-foot:empty{display:none}
 .reply-action-item{display:flex;align-items:center;gap:6px}
 
+/* ---- autocomplete dropdown ---- */
+.suggestions{position:absolute;left:0;right:0;top:calc(100% + 4px);
+  background:var(--panel);border:1px solid var(--line-hi);border-radius:9px;
+  overflow:hidden;z-index:50;display:none;
+  box-shadow:0 10px 32px rgba(0,0,0,.5)}
+.suggestions.visible{display:block}
+.sugg-item{display:flex;align-items:center;gap:10px;padding:9px 14px;
+  cursor:pointer;transition:background .08s;border-bottom:1px solid var(--line)}
+.sugg-item:last-child{border-bottom:none}
+.sugg-item:hover,.sugg-item.focused{background:var(--panel-hi)}
+.sugg-ico{font-size:14px;color:var(--amber);flex-shrink:0;width:20px;text-align:center}
+.sugg-name{font-family:var(--mono);font-size:12px;color:var(--text);flex:1}
+.sugg-name mark{background:none;color:var(--amber)}
+.sugg-desc{font-family:var(--mono);font-size:10px;color:var(--text-faint);
+  letter-spacing:.04em;flex-shrink:0}
+.sugg-badge{font-family:var(--mono);font-size:9px;letter-spacing:.06em;
+  background:var(--bg-soft);border:1px solid var(--line);color:var(--text-faint);
+  padding:1px 6px;border-radius:3px}
+
 /* ---- context toggle ---- */
 .ctx-toggle{font-family:var(--mono);font-size:11px;letter-spacing:.06em;cursor:pointer;
   border:1px solid var(--line-hi);background:var(--panel);color:var(--text-dim);
@@ -258,9 +277,10 @@ body::before{
   <div class="cmd">
     <span class="ico" aria-hidden="true">⌕</span>
     <form id="cmd-form">
-      <input type="text" id="filter" placeholder="Ask Hey Claude…  or  task: Buy milk  ·  /tasks  ·  /brief   (/ to focus)" aria-label="Command input">
+      <input type="text" id="filter" placeholder="Ask, search modules, or  /tasks  ·  /brief  ·  task: Buy milk   (/ to focus)" aria-label="Command input" autocomplete="off" spellcheck="false">
       <button type="submit" id="ask-btn">Ask →</button>
     </form>
+    <div class="suggestions" id="suggestions" role="listbox" aria-label="Suggestions"></div>
   </div>
 
   <div class="thread" id="thread">
@@ -371,6 +391,8 @@ async function loadModes() {
     const modes = await r.json();
     if (!modes.length) return;
     modeOrder = modes.map(m => m.name);
+    // If persisted mode no longer exists in the live list, fall back to default
+    if (!modeOrder.includes(activeMode)) activeMode = modeOrder[0] || 'default';
     modes.forEach((m, i) => {
       const pill = document.createElement('button');
       pill.type = 'button';
@@ -465,12 +487,171 @@ document.getElementById('thread-clear').addEventListener('click', () => {
   threadList.innerHTML = '';
   thread.classList.remove('visible');
   filterInput.value = '';
+  hideSuggestions();
   render('');
 });
 
-/* Filter the board only while no conversation is active */
+/* ============================================================
+   Autocomplete engine
+   ============================================================ */
+const suggestionsEl = document.getElementById('suggestions');
+let suggItems = [];   // current suggestion set
+let suggIdx   = -1;   // keyboard-focused index
+
+const SLASH_CMDS = [
+  { icon:'▦', name:'/tasks', desc:'Today\'s task list',  submit:true  },
+  { icon:'◎', name:'/brief', desc:'Daily briefing',      submit:true  },
+];
+
+/* ---- recent tasks (stored per-session in localStorage) ---- */
+const RECENT_TASKS_LS = 'jarvis_recent_tasks';
+function getRecentTasks() {
+  try { return JSON.parse(localStorage.getItem(RECENT_TASKS_LS) || '[]'); } catch { return []; }
+}
+function addRecentTask(content) {
+  const list = [content, ...getRecentTasks().filter(t => t !== content)].slice(0, 20);
+  try { localStorage.setItem(RECENT_TASKS_LS, JSON.stringify(list)); } catch {}
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function highlight(text, q) {
+  if (!q) return esc(text);
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return esc(text);
+  return esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length));
+}
+
+function renderSuggestions(items) {
+  suggItems = items;
+  suggIdx   = -1;
+  suggestionsEl.innerHTML = '';
+  if (!items.length) { suggestionsEl.classList.remove('visible'); return; }
+
+  items.forEach((item, i) => {
+    const el = document.createElement('div');
+    el.className = 'sugg-item';
+    el.setAttribute('role', 'option');
+    el.innerHTML = `<span class="sugg-ico">${esc(item.icon)}</span>
+      <span class="sugg-name">${item.nameHtml || esc(item.name)}</span>
+      ${item.badge ? `<span class="sugg-badge">${esc(item.badge)}</span>` : ''}
+      <span class="sugg-desc">${esc(item.desc)}</span>`;
+
+    el.addEventListener('mouseenter', () => setFocus(i));
+    el.addEventListener('mousedown', ev => { ev.preventDefault(); accept(i); }); // mousedown fires before blur
+    suggestionsEl.appendChild(el);
+  });
+  suggestionsEl.classList.add('visible');
+}
+
+function hideSuggestions() {
+  suggestionsEl.classList.remove('visible');
+  suggItems = [];
+  suggIdx   = -1;
+}
+
+function setFocus(i) {
+  suggIdx = i;
+  suggestionsEl.querySelectorAll('.sugg-item').forEach((el, j) =>
+    el.classList.toggle('focused', j === i));
+}
+
+function accept(i) {
+  const item = suggItems[i];
+  if (!item) return;
+  hideSuggestions();
+
+  if (item.url) {
+    if (item.url !== '#') window.open(item.url, '_blank', 'noopener');
+    filterInput.value = '';
+  } else if (item.fill !== undefined) {
+    filterInput.value = item.fill;
+    filterInput.focus();
+  } else if (item.submit) {
+    filterInput.value = item.name;
+    document.getElementById('cmd-form').requestSubmit();
+  }
+}
+
+function computeSuggestions(val) {
+  if (!val) return [];
+
+  /* ---- slash commands ---- */
+  if (val.startsWith('/')) {
+    const q = val.toLowerCase();
+    return SLASH_CMDS
+      .filter(c => c.name.startsWith(q))
+      .map(c => ({ ...c, nameHtml: highlight(c.name, val) }));
+  }
+
+  /* ---- task: recent completions ---- */
+  const taskMatch = val.match(/^task[: ]+(.*)$/i);
+  if (taskMatch) {
+    const q = taskMatch[1].trim().toLowerCase();
+    return getRecentTasks()
+      .filter(t => !q || t.toLowerCase().includes(q))
+      .slice(0, 6)
+      .map(t => ({
+        icon: '✓', name: `task: ${t}`,
+        nameHtml: 'task: ' + highlight(t, taskMatch[1].trim()),
+        desc: 'recent', badge: '', fill: `task: ${t}`,
+      }));
+  }
+
+  /* ---- module tile search (only when thread is not open) ---- */
+  if (thread.classList.contains('visible')) return [];
+  const q = val.toLowerCase();
+  return APPS
+    .filter(a => a.name.toLowerCase().includes(q) || a.desc.toLowerCase().includes(q) || a.group.toLowerCase().includes(q))
+    .slice(0, 7)
+    .map(a => ({
+      icon: a.icon, desc: a.group,
+      nameHtml: highlight(a.name, val),
+      name: a.name, url: a.url,
+    }));
+}
+
+/* ---- input event → compute + render suggestions + filter board ---- */
 filterInput.addEventListener('input', e => {
-  if (!thread.classList.contains('visible')) render(e.target.value);
+  const val = e.target.value;
+  if (!thread.classList.contains('visible')) render(val);
+  renderSuggestions(computeSuggestions(val));
+});
+
+/* ---- arrow-key / tab navigation inside the dropdown ---- */
+filterInput.addEventListener('keydown', e => {
+  if (!suggestionsEl.classList.contains('visible')) return;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    setFocus(Math.min(suggIdx + 1, suggItems.length - 1));
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    setFocus(Math.max(suggIdx - 1, 0));
+  } else if (e.key === 'Tab') {
+    // Tab fills the name without submitting (handy for slash commands)
+    if (suggIdx >= 0) {
+      e.preventDefault();
+      const item = suggItems[suggIdx];
+      filterInput.value = item.fill ?? item.name;
+      hideSuggestions();
+    }
+  } else if (e.key === 'Enter') {
+    if (suggIdx >= 0) {
+      e.preventDefault();  // prevent form submit — accept() handles it
+      accept(suggIdx);
+    }
+    // if nothing focused, let the form submit normally
+  } else if (e.key === 'Escape') {
+    hideSuggestions();
+  }
+});
+
+filterInput.addEventListener('focus', () => {
+  renderSuggestions(computeSuggestions(filterInput.value));
+});
+filterInput.addEventListener('blur', () => {
+  // Delay so mousedown on suggestion fires first
+  setTimeout(hideSuggestions, 160);
 });
 
 function makeCard(query, modeLabel) {
@@ -609,8 +790,8 @@ async function handleTaskCreate(content) {
     } else {
       body.className = 'exchange-body';
       body.textContent = `✓ Task created: "${data.content}"`;
-      // Refresh status chip so the task count updates
-      loadStatus();
+      addRecentTask(content);   // persist for autocomplete
+      loadStatus();             // refresh task count in status chips
     }
   } catch (err) {
     card.classList.remove('loading');
