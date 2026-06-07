@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS — Central Interface</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0e14; --bg-soft:#10151e; --panel:#131a24; --panel-hi:#18212e;
+  --line:#1f2a38; --line-hi:#2b3a4d;
+  --text:#e6ecf3; --text-dim:#8a98a8; --text-faint:#586575;
+  --amber:#e0a54f; --amber-dim:#9a7236; --amber-glow:rgba(224,165,79,.12);
+  --teal:#4fc8c0; --teal-dim:#2f7e79;
+  --mono:'IBM Plex Mono',monospace; --display:'Chakra Petch',sans-serif; --body:'IBM Plex Sans',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--body); background:var(--bg); color:var(--text);
+  font-weight:300; line-height:1.6; min-height:100vh;
+  background-image:
+    linear-gradient(var(--line) 1px,transparent 1px),
+    linear-gradient(90deg,var(--line) 1px,transparent 1px);
+  background-size:48px 48px;
+  background-position:center;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse 80% 60% at 50% 0%,var(--amber-glow),transparent 70%);
+}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 28px 64px;position:relative;z-index:1}
+
+/* ---- top bar ---- */
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:24px;
+  border:1px solid var(--line-hi);background:rgba(19,26,36,.7);backdrop-filter:blur(6px);
+  padding:18px 24px;border-radius:10px}
+.brand{display:flex;align-items:center;gap:14px}
+.brand-mark{width:38px;height:38px;border:1.5px solid var(--amber);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;position:relative}
+.brand-mark::after{content:"";position:absolute;width:8px;height:8px;background:var(--amber);
+  border-radius:50%;box-shadow:0 0 12px var(--amber)}
+.brand-mark::before{content:"";position:absolute;inset:4px;border:1px solid var(--amber-dim);border-radius:50%;animation:spin 8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.brand-name{font-family:var(--display);font-weight:700;font-size:19px;letter-spacing:.18em;color:var(--text)}
+.brand-sub{font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--text-faint);text-transform:uppercase}
+.clockbox{text-align:right}
+.clock{font-family:var(--mono);font-size:26px;font-weight:500;color:var(--amber);letter-spacing:.04em;line-height:1.1}
+.datestr{font-family:var(--mono);font-size:11px;color:var(--text-dim);letter-spacing:.12em;text-transform:uppercase;margin-top:2px}
+
+/* ---- greeting ---- */
+.greet{margin:38px 4px 26px}
+.greet h1{font-family:var(--display);font-weight:600;font-size:clamp(26px,4vw,40px);letter-spacing:-.01em;color:var(--text)}
+.greet h1 span{color:var(--amber)}
+.greet p{font-family:var(--mono);font-size:12px;color:var(--text-dim);letter-spacing:.06em;margin-top:6px}
+
+/* ---- status strip ---- */
+.status{display:flex;flex-wrap:wrap;gap:10px;margin:0 4px 32px}
+.chip{font-family:var(--mono);font-size:11px;letter-spacing:.06em;border:1px solid var(--line-hi);
+  background:var(--panel);padding:6px 12px;border-radius:6px;display:flex;align-items:center;gap:8px;color:var(--text-dim)}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot.ok{background:var(--teal);box-shadow:0 0 8px var(--teal-dim)}
+.dot.warn{background:var(--amber);box-shadow:0 0 8px var(--amber-dim)}
+.dot.idle{background:var(--text-faint)}
+
+/* ---- command bar ---- */
+.cmd{position:relative;margin:0 4px 36px}
+.cmd input{width:100%;font-family:var(--mono);font-size:14px;color:var(--text);
+  background:var(--panel);border:1px solid var(--line-hi);border-radius:9px;
+  padding:15px 18px 15px 46px;letter-spacing:.03em;outline:none;transition:border-color .15s,box-shadow .15s}
+.cmd input::placeholder{color:var(--text-faint)}
+.cmd input:focus{border-color:var(--amber-dim);box-shadow:0 0 0 3px var(--amber-glow)}
+.cmd .ico{position:absolute;left:16px;top:50%;transform:translateY(-50%);color:var(--text-faint);font-size:18px}
+
+/* ---- groups ---- */
+.group{margin-bottom:34px}
+.group-head{display:flex;align-items:center;gap:14px;margin:0 4px 16px}
+.group-title{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--amber)}
+.group-line{flex:1;height:1px;background:var(--line-hi)}
+.group-count{font-family:var(--mono);font-size:10px;color:var(--text-faint)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:12px}
+.tile{display:flex;flex-direction:column;gap:0;text-decoration:none;color:inherit;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 16px 14px;
+  position:relative;overflow:hidden;transition:transform .14s,border-color .14s,background .14s;
+  opacity:0;animation:rise .5s ease forwards}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.tile::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent;transition:background .14s}
+.tile:hover{transform:translateY(-3px);border-color:var(--line-hi);background:var(--panel-hi)}
+.tile:hover::before{background:var(--amber)}
+.tile:focus-visible{outline:none;border-color:var(--amber-dim);box-shadow:0 0 0 3px var(--amber-glow)}
+.tile-ico{font-size:22px;color:var(--amber);margin-bottom:12px;line-height:1}
+.tile-name{font-family:var(--display);font-weight:500;font-size:15px;letter-spacing:.01em;color:var(--text)}
+.tile-desc{font-family:var(--mono);font-size:10.5px;color:var(--text-dim);letter-spacing:.03em;margin-top:3px;line-height:1.45}
+.tile-arrow{position:absolute;top:14px;right:14px;font-size:14px;color:var(--text-faint);opacity:0;transition:opacity .14s,transform .14s}
+.tile:hover .tile-arrow{opacity:1;transform:translateX(2px)}
+
+.empty{font-family:var(--mono);font-size:12px;color:var(--text-faint);text-align:center;padding:40px;display:none}
+
+/* ---- footer ---- */
+.foot{margin-top:48px;padding-top:22px;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:11px;color:var(--text-faint);letter-spacing:.05em;
+  display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.foot a{color:var(--text-dim);text-decoration:none;border-bottom:1px dotted var(--line-hi)}
+.foot a:hover{color:var(--amber)}
+
+@media(max-width:640px){
+  .topbar{flex-direction:column;align-items:flex-start;gap:14px}
+  .clockbox{text-align:left}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <div class="brand-name">JARVIS</div>
+        <div class="brand-sub">Central Interface · v0.1</div>
+      </div>
+    </div>
+    <div class="clockbox">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="datestr" id="date">———</div>
+    </div>
+  </header>
+
+  <section class="greet">
+    <h1 id="greeting">Welcome back, <span>Simão</span></h1>
+    <p id="tagline">All systems nominal · select a module to engage</p>
+  </section>
+
+  <div class="status" id="status"></div>
+
+  <div class="cmd">
+    <span class="ico" aria-hidden="true">⌕</span>
+    <input type="text" id="filter" placeholder="Search modules…  (type to filter)" aria-label="Search modules">
+  </div>
+
+  <main id="board"></main>
+  <div class="empty" id="empty">No modules match that search.</div>
+
+  <footer class="foot">
+    <span>SIMÃO · PERSONAL OPS DECK</span>
+    <span>Edit the <a href="#" onclick="return false">APPS</a> array in this file to add modules</span>
+  </footer>
+
+</div>
+
+<script>
+/* ============================================================
+   CENTRAL INTERFACE — module registry
+   Add an app = add one object. group creates the section.
+   Replace REPO URLs with your own GitHub paths.
+   ============================================================ */
+const APPS = [
+  // —— COMMAND ——
+  { group:"Command", icon:"◆", name:"Claude", desc:"Primary assistant", url:"https://claude.ai" },
+  { group:"Command", icon:"◉", name:"Hey Claude", desc:"Voice assistant · in build", url:"#" },
+  { group:"Command", icon:"⬡", name:"Skills Library", desc:"57+ custom skills", url:"#" },
+
+  // —— DAILY OPS ——
+  { group:"Daily Ops", icon:"▦", name:"Calendar", desc:"Google Calendar", url:"https://calendar.google.com" },
+  { group:"Daily Ops", icon:"✓", name:"Todoist", desc:"Tasks & habits", url:"https://app.todoist.com" },
+  { group:"Daily Ops", icon:"✉", name:"Gmail", desc:"simao.tc.miguel@…", url:"https://mail.google.com" },
+  { group:"Daily Ops", icon:"❖", name:"Notion", desc:"Workspace & wiki", url:"https://notion.so" },
+
+  // —— KNOWLEDGE & FILES ——
+  { group:"Knowledge & Files", icon:"⛁", name:"Google Drive", desc:"Cloud storage", url:"https://drive.google.com" },
+  { group:"Knowledge & Files", icon:"▤", name:"Knowledge Base", desc:"KB v1.4 · in Drive", url:"https://drive.google.com" },
+
+  // —— HEALTH & FITNESS ——
+  { group:"Health & Fitness", icon:"❤", name:"Complete Nutrition", desc:"Repo · edit URL", url:"https://github.com" },
+  { group:"Health & Fitness", icon:"➤", name:"Strava", desc:"Training log", url:"https://www.strava.com" },
+
+  // —— BUILD ——
+  { group:"Build", icon:"⌬", name:"GitHub", desc:"All repositories", url:"https://github.com" },
+  { group:"Build", icon:"⚙", name:"Postman", desc:"API testing", url:"https://www.postman.com" },
+  { group:"Build", icon:"▸", name:"Claude Code", desc:"Agentic CLI · setup", url:"https://docs.claude.com/en/docs/claude-code" },
+  { group:"Build", icon:"☁", name:"Azure / MS Learn", desc:"AZ-900 → AZ-104", url:"https://learn.microsoft.com/credentials/certifications/azure-fundamentals/" },
+
+  // —— COMMS ——
+  { group:"Comms", icon:"#", name:"Slack", desc:"Team messaging", url:"https://slack.com" },
+  { group:"Comms", icon:"▷", name:"Zoom", desc:"Calls", url:"https://zoom.us" },
+  { group:"Comms", icon:"✦", name:"Fireflies", desc:"Meeting transcripts", url:"https://app.fireflies.ai" },
+
+  // —— MEDIA ——
+  { group:"Media", icon:"♫", name:"Spotify", desc:"Music", url:"https://open.spotify.com" },
+];
+
+const ORDER = ["Command","Daily Ops","Knowledge & Files","Health & Fitness","Build","Comms","Media"];
+
+const STATUS = [
+  { label:"KB v1.4 synced", state:"ok" },
+  { label:"Strava · no data", state:"warn" },
+  { label:"Claude Code · not installed", state:"warn" },
+  { label:"Hey Claude · pending build", state:"idle" },
+];
+
+/* ---- render status ---- */
+const statusEl = document.getElementById('status');
+STATUS.forEach(s=>{
+  const c=document.createElement('div'); c.className='chip';
+  c.innerHTML=`<span class="dot ${s.state}"></span>${s.label}`;
+  statusEl.appendChild(c);
+});
+
+/* ---- render board ---- */
+const board = document.getElementById('board');
+function render(filter=""){
+  board.innerHTML="";
+  const q=filter.trim().toLowerCase();
+  let shown=0, delay=0;
+  ORDER.forEach(g=>{
+    const items=APPS.filter(a=>a.group===g &&
+      (a.name.toLowerCase().includes(q)||a.desc.toLowerCase().includes(q)||g.toLowerCase().includes(q)));
+    if(!items.length) return;
+    const sec=document.createElement('section'); sec.className='group';
+    sec.innerHTML=`<div class="group-head"><span class="group-title">${g}</span>
+      <span class="group-line"></span><span class="group-count">${items.length} mod</span></div>`;
+    const grid=document.createElement('div'); grid.className='grid';
+    items.forEach(a=>{
+      shown++;
+      const t=document.createElement('a');
+      t.className='tile'; t.href=a.url;
+      if(a.url!=="#"){ t.target="_blank"; t.rel="noopener"; }
+      t.setAttribute('aria-label',`${a.name} — ${a.desc}`);
+      t.style.animationDelay=(delay++ *0.03)+"s";
+      t.innerHTML=`<span class="tile-arrow" aria-hidden="true">↗</span>
+        <span class="tile-ico" aria-hidden="true">${a.icon}</span>
+        <span class="tile-name">${a.name}</span>
+        <span class="tile-desc">${a.desc}</span>`;
+      grid.appendChild(t);
+    });
+    sec.appendChild(grid); board.appendChild(sec);
+  });
+  document.getElementById('empty').style.display = shown? "none":"block";
+}
+render();
+document.getElementById('filter').addEventListener('input',e=>render(e.target.value));
+
+/* ---- clock + greeting ---- */
+function tick(){
+  const d=new Date();
+  const p=n=>String(n).padStart(2,'0');
+  document.getElementById('clock').textContent=`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  document.getElementById('date').textContent=
+    d.toLocaleDateString('en-GB',{weekday:'short',day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
+  const h=d.getHours();
+  const g = h<6?"Still up, ":h<12?"Good morning, ":h<19?"Good afternoon, ":"Good evening, ";
+  document.getElementById('greeting').innerHTML=`${g}<span>Simão</span>`;
+}
+tick(); setInterval(tick,1000);
+
+/* ---- keyboard: "/" focuses search ---- */
+document.addEventListener('keydown',e=>{
+  if(e.key==='/' && document.activeElement.id!=='filter'){ e.preventDefault(); document.getElementById('filter').focus(); }
+});
+</script>
+</body>
+</html>
