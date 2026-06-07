@@ -15,6 +15,13 @@ class DispatchRequest(BaseModel):
     history: list[dict] = []
 
 
+@router.get("/context")
+async def get_context() -> dict:
+    """Return the current context block so the UI can preview what Hey Claude will see."""
+    ctx = await context.gather()
+    return {"context": ctx}
+
+
 @router.get("/modes")
 async def get_modes() -> list[dict]:
     return await heyclaude.modes()

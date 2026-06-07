@@ -4,9 +4,10 @@ Assembles a compact context block from live personal data sources and
 returns it as a string to prepend to the user's query. Hey Claude then
 sees the full context before generating its reply.
 
-Currently sources:
-  - Current timestamp and day of week
+Current sources (all fetched in parallel):
+  - Current timestamp, day of week, and weather
   - Today's Todoist tasks (requires TODOIST_API_TOKEN)
+  - Recent GitHub activity (public events API, no token needed)
 
 Conversation history is handled separately by format_history() so that
 the caller can decide whether to include it independently of the
@@ -15,25 +16,33 @@ use_context toggle.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
-import asyncio
-
-from . import github, todoist
+from . import github, todoist, weather
 
 
 async def gather() -> str:
-    """Return a context block (timestamp + tasks + GitHub activity) to prepend to the query."""
-    now = datetime.now()
-    lines: list[str] = [
-        f"[Context · {now.strftime('%A %d %b %Y · %H:%M')}]",
-    ]
+    """Return a context block to prepend to the user's query.
 
-    # Fan out both data sources in parallel so gather() stays fast
-    task_list, gh_activity = await asyncio.gather(
+    All remote calls are fanned out in parallel — gather() latency equals
+    the slowest single source, not the sum.
+    """
+    now = datetime.now()
+
+    task_list, gh_activity, weather_str = await asyncio.gather(
         todoist.tasks(),
         github.recent_activity(),
+        weather.current(),
     )
+
+    # Header line — timestamp + weather when available
+    header = f"[Context · {now.strftime('%A %d %b %Y · %H:%M')}"
+    if weather_str:
+        header += f" · {weather_str}"
+    header += "]"
+
+    lines: list[str] = [header]
 
     if task_list:
         names = [t.get("content", "untitled") for t in task_list]

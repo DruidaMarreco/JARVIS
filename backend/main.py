@@ -15,7 +15,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-from .routers import dispatch, status, tasks  # noqa: E402
+from .routers import dispatch, github_router, status, tasks  # noqa: E402
 
 FRONTEND = Path(__file__).parent.parent / "frontend"
 
@@ -23,6 +23,7 @@ app = FastAPI(title="JARVIS")
 app.include_router(status.router, prefix="/api")
 app.include_router(dispatch.router, prefix="/api")
 app.include_router(tasks.router, prefix="/api")
+app.include_router(github_router.router, prefix="/api")
 
 
 @app.get("/healthz")

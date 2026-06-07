@@ -274,6 +274,47 @@ class TestCloseTaskRoute:
 # ---------------------------------------------------------------------------
 
 
+class TestPRsRoute:
+    def test_returns_prs_list_and_count(self):
+        prs = [
+            {"number": 1, "title": "Add feature", "repo": "JARVIS", "url": "https://github.com/u/r/pull/1", "updated_at": "2026-06-07"},
+        ]
+        with patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=prs):
+            r = client.get("/api/prs")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] == 1
+        assert data["prs"][0]["title"] == "Add feature"
+
+    def test_empty_when_no_prs(self):
+        with patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=[]):
+            r = client.get("/api/prs")
+        assert r.status_code == 200
+        assert r.json() == {"prs": [], "count": 0}
+
+    def test_pr_shape(self):
+        prs = [{"number": 7, "title": "Fix bug", "repo": "repo", "url": "https://x", "updated_at": "2026-01-01"}]
+        with patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=prs):
+            r = client.get("/api/prs")
+        item = r.json()["prs"][0]
+        assert {"number", "title", "repo", "url", "updated_at"} <= item.keys()
+
+
+class TestContextRoute:
+    def test_returns_context_string(self):
+        ctx = "[Context · Sunday · 22°C, partly cloudy]\nNo Todoist tasks available."
+        with patch("backend.services.context.gather", new_callable=AsyncMock, return_value=ctx):
+            r = client.get("/api/context")
+        assert r.status_code == 200
+        assert r.json()["context"] == ctx
+
+    def test_context_key_always_present(self):
+        with patch("backend.services.context.gather", new_callable=AsyncMock, return_value=""):
+            r = client.get("/api/context")
+        assert r.status_code == 200
+        assert "context" in r.json()
+
+
 class TestHealthz:
     def test_returns_ok(self):
         r = client.get("/healthz")

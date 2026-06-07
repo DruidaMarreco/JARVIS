@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from backend.services import context, github, heyclaude, todoist
+from backend.services import context, github, heyclaude, todoist, weather
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +87,15 @@ class TestContextService:
         assert "Review PR" in result
         assert "2" in result
 
+    def test_gather_includes_weather_in_header(self, monkeypatch):
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+        monkeypatch.setenv("GITHUB_USERNAME", "")
+        payload = {"current": {"temperature_2m": 21.0, "weathercode": 1, "windspeed_10m": 5.0}}
+        with _mock_get("weather", return_value=_response(200, payload)):
+            result = asyncio.run(context.gather())
+        assert "21°C" in result
+        assert "[Context" in result
+
     def test_gather_includes_github_activity(self, monkeypatch):
         monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
         monkeypatch.setenv("GITHUB_USERNAME", "testuser")
@@ -136,6 +145,40 @@ class TestContextService:
         ]
         result = context.format_history(history)
         assert result.index("First") < result.index("Second") < result.index("Third")
+
+
+class TestWeatherService:
+    def test_returns_temperature_and_description(self, monkeypatch):
+        monkeypatch.setenv("WEATHER_LAT", "38.71")
+        monkeypatch.setenv("WEATHER_LON", "-9.14")
+        payload = {"current": {"temperature_2m": 22.4, "weathercode": 2, "windspeed_10m": 8.0}}
+        with _mock_get("weather", return_value=_response(200, payload)):
+            result = asyncio.run(weather.current())
+        assert "22°C" in result
+        assert "partly cloudy" in result
+
+    def test_includes_wind_when_above_threshold(self, monkeypatch):
+        payload = {"current": {"temperature_2m": 18.0, "weathercode": 1, "windspeed_10m": 25.0}}
+        with _mock_get("weather", return_value=_response(200, payload)):
+            result = asyncio.run(weather.current())
+        assert "25 km/h wind" in result
+
+    def test_omits_wind_when_calm(self, monkeypatch):
+        payload = {"current": {"temperature_2m": 20.0, "weathercode": 0, "windspeed_10m": 5.0}}
+        with _mock_get("weather", return_value=_response(200, payload)):
+            result = asyncio.run(weather.current())
+        assert "wind" not in result
+
+    def test_returns_empty_on_api_failure(self, monkeypatch):
+        with _mock_get("weather", side_effect=httpx.ConnectError("refused")):
+            result = asyncio.run(weather.current())
+        assert result == ""
+
+    def test_returns_empty_when_temp_missing(self, monkeypatch):
+        payload = {"current": {"weathercode": 0}}
+        with _mock_get("weather", return_value=_response(200, payload)):
+            result = asyncio.run(weather.current())
+        assert result == ""
 
 
 class TestTodoistService:
@@ -339,6 +382,71 @@ class TestGithubRecentActivity:
         with _mock_get("github", return_value=_response(200, events)):
             result = asyncio.run(github.recent_activity(limit=2))
         assert len(result) == 2
+
+
+class TestOpenPRsService:
+    def test_returns_list_of_prs(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        items = [
+            {
+                "number": 42,
+                "title": "Add dark mode",
+                "repository_url": "https://api.github.com/repos/testuser/JARVIS",
+                "html_url": "https://github.com/testuser/JARVIS/pull/42",
+                "updated_at": "2026-06-07T10:00:00Z",
+            }
+        ]
+        with _mock_get("github", return_value=_response(200, {"items": items})):
+            result = asyncio.run(github.open_prs())
+        assert len(result) == 1
+        assert result[0]["number"] == 42
+        assert result[0]["title"] == "Add dark mode"
+        assert result[0]["repo"] == "JARVIS"
+        assert result[0]["url"] == "https://github.com/testuser/JARVIS/pull/42"
+        assert result[0]["updated_at"] == "2026-06-07"
+
+    def test_empty_items_returns_empty_list(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        with _mock_get("github", return_value=_response(200, {"items": []})):
+            result = asyncio.run(github.open_prs())
+        assert result == []
+
+    def test_limit_respected(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        items = [
+            {
+                "number": i,
+                "title": f"PR {i}",
+                "repository_url": "https://api.github.com/repos/u/r",
+                "html_url": f"https://github.com/u/r/pull/{i}",
+                "updated_at": "2026-06-01T00:00:00Z",
+            }
+            for i in range(5)
+        ]
+        with _mock_get("github", return_value=_response(200, {"items": items})):
+            result = asyncio.run(github.open_prs(limit=3))
+        assert len(result) == 3
+
+    def test_error_returns_empty_list(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        with _mock_get("github", side_effect=httpx.ConnectError("refused")):
+            result = asyncio.run(github.open_prs())
+        assert result == []
+
+    def test_missing_repository_url_uses_question_mark(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        items = [
+            {
+                "number": 1,
+                "title": "Fix bug",
+                "repository_url": "",
+                "html_url": "https://github.com/u/r/pull/1",
+                "updated_at": "2026-06-01T00:00:00Z",
+            }
+        ]
+        with _mock_get("github", return_value=_response(200, {"items": items})):
+            result = asyncio.run(github.open_prs())
+        assert result[0]["repo"] == "?"
 
 
 # ---------------------------------------------------------------------------
