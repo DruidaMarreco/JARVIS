@@ -17,17 +17,24 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from . import todoist
+import asyncio
+
+from . import github, todoist
 
 
 async def gather() -> str:
-    """Return a context block (timestamp + tasks) to prepend to the query."""
+    """Return a context block (timestamp + tasks + GitHub activity) to prepend to the query."""
     now = datetime.now()
     lines: list[str] = [
         f"[Context · {now.strftime('%A %d %b %Y · %H:%M')}]",
     ]
 
-    task_list = await todoist.tasks()
+    # Fan out both data sources in parallel so gather() stays fast
+    task_list, gh_activity = await asyncio.gather(
+        todoist.tasks(),
+        github.recent_activity(),
+    )
+
     if task_list:
         names = [t.get("content", "untitled") for t in task_list]
         shown = names[:10]
@@ -35,6 +42,9 @@ async def gather() -> str:
         lines.append(f"Today's tasks ({len(names)}): {' · '.join(shown)}{suffix}")
     else:
         lines.append("No Todoist tasks available.")
+
+    if gh_activity:
+        lines.append(f"Recent GitHub: {' · '.join(gh_activity)}")
 
     return "\n".join(lines)
 

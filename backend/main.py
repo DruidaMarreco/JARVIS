@@ -8,13 +8,14 @@ from fastapi.responses import FileResponse
 
 load_dotenv()
 
-from .routers import dispatch, status  # noqa: E402
+from .routers import dispatch, status, tasks  # noqa: E402
 
 FRONTEND = Path(__file__).parent.parent / "frontend"
 
 app = FastAPI(title="JARVIS")
 app.include_router(status.router, prefix="/api")
 app.include_router(dispatch.router, prefix="/api")
+app.include_router(tasks.router, prefix="/api")
 
 
 @app.get("/")

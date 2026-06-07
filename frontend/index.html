@@ -209,7 +209,7 @@ body::before{
   <div class="cmd">
     <span class="ico" aria-hidden="true">⌕</span>
     <form id="cmd-form">
-      <input type="text" id="filter" placeholder="Ask Hey Claude or search modules…  (/ to focus)" aria-label="Command input">
+      <input type="text" id="filter" placeholder="Ask Hey Claude… or  task: Buy milk  to capture a task   (/ to focus)" aria-label="Command input">
       <button type="submit" id="ask-btn">Ask →</button>
     </form>
   </div>
@@ -468,9 +468,60 @@ function fillCard(card, data) {
 
 document.getElementById('cmd-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const query = filterInput.value.trim();
-  if (!query) return;
+  const raw = filterInput.value.trim();
+  if (!raw) return;
 
+  // Detect  task:  prefix — create a Todoist task directly
+  const taskMatch = raw.match(/^task[: ]+(.+)/i);
+  if (taskMatch) {
+    await handleTaskCreate(taskMatch[1].trim());
+  } else {
+    await handleDispatch(raw);
+  }
+});
+
+async function handleTaskCreate(content) {
+  const card = makeCard(`task: ${content}`, '✓ Todoist', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.textContent = 'Creating task…';
+
+  filterInput.value = '';
+  askBtn.disabled = true;
+  render('');
+
+  try {
+    const r = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const data = await r.json();
+    card.classList.remove('loading');
+    if (data.error) {
+      body.className = 'exchange-body';
+      body.textContent = `Failed to create task: ${data.detail || data.error}`;
+    } else {
+      body.className = 'exchange-body';
+      body.textContent = `✓ Task created: "${data.content}"`;
+      // Refresh status chip so the task count updates
+      loadStatus();
+    }
+  } catch (err) {
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    body.textContent = 'Error: ' + err;
+  } finally {
+    askBtn.disabled = false;
+    filterInput.focus();
+  }
+}
+
+async function handleDispatch(query) {
   const modeLabel = document.querySelector(`.mode-pill[data-mode="${activeMode}"]`)
     ?.textContent?.trim() || 'Voice';
 
@@ -507,7 +558,7 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
     askBtn.disabled = false;
     filterInput.focus();
   }
-});
+}
 
 /* ---- keyboard shortcuts ---- */
 document.addEventListener('keydown', e => {
@@ -556,6 +607,9 @@ function tick() {
 }
 tick();
 setInterval(tick, 1000);
+
+/* ---- auto-refresh status every 60 s ---- */
+setInterval(loadStatus, 60_000);
 </script>
 </body>
 </html>

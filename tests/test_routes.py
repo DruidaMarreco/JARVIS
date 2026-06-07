@@ -192,6 +192,39 @@ class TestDispatchRoute:
 
 
 # ---------------------------------------------------------------------------
+# POST /api/tasks
+# ---------------------------------------------------------------------------
+
+
+class TestTasksRoute:
+    def test_creates_task_via_todoist_service(self):
+        created = {"id": "42", "content": "Buy milk"}
+        with patch("backend.services.todoist.create_task", new_callable=AsyncMock, return_value=created) as mock:
+            r = client.post("/api/tasks", json={"content": "Buy milk"})
+        assert r.status_code == 200
+        assert r.json()["content"] == "Buy milk"
+        mock.assert_called_once_with("Buy milk", "today")
+
+    def test_custom_due_string_forwarded(self):
+        created = {"id": "1", "content": "Meeting prep"}
+        with patch("backend.services.todoist.create_task", new_callable=AsyncMock, return_value=created) as mock:
+            r = client.post("/api/tasks", json={"content": "Meeting prep", "due_string": "tomorrow"})
+        assert r.status_code == 200
+        mock.assert_called_once_with("Meeting prep", "tomorrow")
+
+    def test_missing_content_returns_422(self):
+        r = client.post("/api/tasks", json={})
+        assert r.status_code == 422
+
+    def test_error_from_service_propagates(self):
+        err = {"error": "no_token", "detail": "TODOIST_API_TOKEN is not set"}
+        with patch("backend.services.todoist.create_task", new_callable=AsyncMock, return_value=err):
+            r = client.post("/api/tasks", json={"content": "x"})
+        assert r.status_code == 200
+        assert r.json()["error"] == "no_token"
+
+
+# ---------------------------------------------------------------------------
 # GET /  (frontend)
 # ---------------------------------------------------------------------------
 

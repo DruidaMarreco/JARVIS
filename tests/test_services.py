@@ -87,6 +87,17 @@ class TestContextService:
         assert "Review PR" in result
         assert "2" in result
 
+    def test_gather_includes_github_activity(self, monkeypatch):
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        events = [
+            {"type": "PushEvent", "repo": {"name": "u/JARVIS"}, "payload": {"commits": [{}]}}
+        ]
+        with _mock_get("github", return_value=_response(200, events)):
+            result = asyncio.run(context.gather())
+        assert "Recent GitHub" in result
+        assert "JARVIS" in result
+
     def test_gather_caps_at_ten_tasks(self, monkeypatch):
         monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
         tasks = [{"content": f"Task {i}"} for i in range(15)]
@@ -187,6 +198,33 @@ class TestTodoistService:
 # ---------------------------------------------------------------------------
 
 
+class TestTodoistCreateTask:
+    def test_no_token_returns_error(self, monkeypatch):
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+        result = asyncio.run(todoist.create_task("Buy milk"))
+        assert result["error"] == "no_token"
+
+    def test_successful_creation(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        task = {"id": "1", "content": "Buy milk"}
+        with _mock_post("todoist", return_value=_response(200, task)):
+            result = asyncio.run(todoist.create_task("Buy milk"))
+        assert result["content"] == "Buy milk"
+
+    def test_http_error_returns_error_dict(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        with _mock_post("todoist", return_value=_response(403, {"error": "Forbidden"})):
+            result = asyncio.run(todoist.create_task("Buy milk"))
+        assert result["error"] == "http_error"
+        assert "403" in result["detail"]
+
+    def test_connection_error_returns_error_dict(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        with _mock_post("todoist", side_effect=httpx.ConnectError("refused")):
+            result = asyncio.run(todoist.create_task("Buy milk"))
+        assert result["error"] == "request_failed"
+
+
 class TestGithubService:
     def test_ok_response_shows_repo_count(self, monkeypatch):
         monkeypatch.setenv("GITHUB_USERNAME", "testuser")
@@ -212,6 +250,67 @@ class TestGithubService:
             result = asyncio.run(github.check())
         assert result["state"] == "ok"
         assert "?" in result["detail"]
+
+
+class TestGithubRecentActivity:
+    def test_push_event_formatted(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        events = [
+            {
+                "type": "PushEvent",
+                "repo": {"name": "testuser/JARVIS"},
+                "payload": {"commits": [{}, {}]},
+            }
+        ]
+        with _mock_get("github", return_value=_response(200, events)):
+            result = asyncio.run(github.recent_activity())
+        assert len(result) == 1
+        assert "2 commits" in result[0]
+        assert "JARVIS" in result[0]
+
+    def test_pull_request_event_formatted(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        events = [
+            {
+                "type": "PullRequestEvent",
+                "repo": {"name": "testuser/repo"},
+                "payload": {
+                    "action": "opened",
+                    "pull_request": {"title": "Add feature X"},
+                },
+            }
+        ]
+        with _mock_get("github", return_value=_response(200, events)):
+            result = asyncio.run(github.recent_activity())
+        assert len(result) == 1
+        assert "PR opened" in result[0]
+        assert "Add feature X" in result[0]
+
+    def test_deduplicates_push_events_per_repo(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        events = [
+            {"type": "PushEvent", "repo": {"name": "u/repo"}, "payload": {"commits": [{}]}},
+            {"type": "PushEvent", "repo": {"name": "u/repo"}, "payload": {"commits": [{}]}},
+        ]
+        with _mock_get("github", return_value=_response(200, events)):
+            result = asyncio.run(github.recent_activity())
+        assert len(result) == 1
+
+    def test_error_returns_empty_list(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        with _mock_get("github", side_effect=httpx.ConnectError("refused")):
+            result = asyncio.run(github.recent_activity())
+        assert result == []
+
+    def test_limit_respected(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        events = [
+            {"type": "PushEvent", "repo": {"name": f"u/repo{i}"}, "payload": {"commits": [{}]}}
+            for i in range(10)
+        ]
+        with _mock_get("github", return_value=_response(200, events)):
+            result = asyncio.run(github.recent_activity(limit=2))
+        assert len(result) == 2
 
 
 # ---------------------------------------------------------------------------
