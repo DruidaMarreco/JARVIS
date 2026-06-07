@@ -81,12 +81,15 @@ body::before{
 
 /* ---- command bar ---- */
 .cmd{position:relative;margin:0 4px 12px}
-.cmd form{display:flex;gap:0}
-.cmd input{flex:1;font-family:var(--mono);font-size:14px;color:var(--text);
+.cmd form{display:flex;gap:0;align-items:stretch}
+.cmd textarea{flex:1;font-family:var(--mono);font-size:14px;color:var(--text);
   background:var(--panel);border:1px solid var(--line-hi);border-radius:9px 0 0 9px;
-  padding:15px 18px 15px 46px;letter-spacing:.03em;outline:none;transition:border-color .15s,box-shadow .15s}
-.cmd input::placeholder{color:var(--text-faint)}
-.cmd input:focus{border-color:var(--amber-dim);box-shadow:0 0 0 3px var(--amber-glow)}
+  padding:15px 18px 15px 46px;letter-spacing:.03em;outline:none;
+  transition:border-color .15s,box-shadow .15s;
+  resize:none;overflow:hidden;min-height:52px;max-height:200px;line-height:1.55;
+  field-sizing:content}
+.cmd textarea::placeholder{color:var(--text-faint)}
+.cmd textarea:focus{border-color:var(--amber-dim);box-shadow:0 0 0 3px var(--amber-glow)}
 .cmd .ico{position:absolute;left:16px;top:50%;transform:translateY(-50%);color:var(--text-faint);font-size:18px;pointer-events:none}
 .cmd button{font-family:var(--mono);font-size:12px;letter-spacing:.08em;color:var(--bg);
   background:var(--amber);border:none;border-radius:0 9px 9px 0;padding:0 20px;cursor:pointer;
@@ -216,6 +219,11 @@ body::before{
 .tile-desc{font-family:var(--mono);font-size:10.5px;color:var(--text-dim);letter-spacing:.03em;margin-top:3px;line-height:1.45}
 .tile-arrow{position:absolute;top:14px;right:14px;font-size:14px;color:var(--text-faint);opacity:0;transition:opacity .14s,transform .14s}
 .tile:hover .tile-arrow{opacity:1;transform:translateX(2px)}
+.tile-pin{position:absolute;bottom:10px;right:12px;font-size:13px;background:none;border:none;
+  cursor:pointer;color:var(--text-faint);opacity:0;transition:opacity .14s,color .14s;
+  padding:2px;line-height:1;z-index:1}
+.tile:hover .tile-pin{opacity:.6}
+.tile-pin:hover,.tile-pin.pinned{opacity:1;color:var(--amber)}
 
 .empty{font-family:var(--mono);font-size:12px;color:var(--text-faint);text-align:center;padding:40px;display:none}
 
@@ -282,7 +290,7 @@ body::before{
   <div class="cmd">
     <span class="ico" aria-hidden="true">⌕</span>
     <form id="cmd-form">
-      <input type="text" id="filter" placeholder="Ask, search modules, or  /tasks  ·  /brief  ·  task: Buy milk   (/ to focus)" aria-label="Command input" autocomplete="off" spellcheck="false">
+      <textarea id="filter" rows="1" placeholder="Ask, search modules, or  /tasks  ·  /brief  ·  /ctx  ·  task: Buy milk   (/ to focus)" aria-label="Command input" autocomplete="off" spellcheck="false"></textarea>
       <button type="submit" id="ask-btn">Ask →</button>
     </form>
     <div class="suggestions" id="suggestions" role="listbox" aria-label="Suggestions"></div>
@@ -315,6 +323,7 @@ body::before{
         <span class="kbd-key">task: …</span><span class="kbd-desc">Capture Todoist task</span></div>
       <div class="kbd-row"><span class="kbd-key">/tasks</span><span class="kbd-desc">Show today's task list</span></div>
       <div class="kbd-row"><span class="kbd-key">/brief</span><span class="kbd-desc">Daily briefing</span></div>
+      <div class="kbd-row"><span class="kbd-key">/ctx</span><span class="kbd-desc">Preview context block</span></div>
     </div>
   </div>
 
@@ -374,6 +383,18 @@ function loadPrefs() {
 }
 function savePrefs(patch) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify({ ...loadPrefs(), ...patch })); } catch {}
+}
+
+/* ---- pinned tiles (persisted across sessions) ---- */
+const PINNED_LS = 'jarvis_pinned';
+function getPinned() {
+  try { return new Set(JSON.parse(localStorage.getItem(PINNED_LS) || '[]')); } catch { return new Set(); }
+}
+function togglePin(name) {
+  const pins = getPinned();
+  if (pins.has(name)) pins.delete(name); else pins.add(name);
+  try { localStorage.setItem(PINNED_LS, JSON.stringify([...pins])); } catch {}
+  return pins.has(name);
 }
 
 /* ---- modes (live from /api/modes) ---- */
@@ -446,10 +467,53 @@ loadStatus();
 
 /* ---- render board ---- */
 const board = document.getElementById('board');
+
+function makeTile(a, delay, q = '') {
+  const pins = getPinned();
+  const isPinned = pins.has(a.name);
+  const t = document.createElement('a');
+  t.className = 'tile';
+  t.href = a.url;
+  if (a.url !== '#') { t.target = '_blank'; t.rel = 'noopener'; }
+  t.setAttribute('aria-label', `${a.name} — ${a.desc}`);
+  t.style.animationDelay = (delay * 0.03) + 's';
+  t.innerHTML = `<span class="tile-arrow" aria-hidden="true">↗</span>
+    <span class="tile-ico" aria-hidden="true">${a.icon}</span>
+    <span class="tile-name">${q ? highlight(a.name, q) : esc(a.name)}</span>
+    <span class="tile-desc">${q ? highlight(a.desc, q) : esc(a.desc)}</span>
+    <button class="tile-pin${isPinned ? ' pinned' : ''}" aria-label="${isPinned ? 'Unpin' : 'Pin'} ${esc(a.name)}" title="${isPinned ? 'Unpin' : 'Pin'}">★</button>`;
+  // Pin button: prevent tile navigation, toggle pin, re-render
+  t.querySelector('.tile-pin').addEventListener('click', ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    togglePin(a.name);
+    render(filterInput ? filterInput.value : '');
+  });
+  return t;
+}
+
 function render(filter = '') {
   board.innerHTML = '';
   const q = filter.trim().toLowerCase();
   let shown = 0, delay = 0;
+
+  // Pinned group — only when not filtering
+  if (!q) {
+    const pins = getPinned();
+    const pinnedApps = APPS.filter(a => pins.has(a.name));
+    if (pinnedApps.length) {
+      const sec = document.createElement('section');
+      sec.className = 'group';
+      sec.innerHTML = `<div class="group-head"><span class="group-title">Pinned</span>
+        <span class="group-line"></span><span class="group-count">${pinnedApps.length} mod</span></div>`;
+      const grid = document.createElement('div');
+      grid.className = 'grid';
+      pinnedApps.forEach(a => { shown++; grid.appendChild(makeTile(a, delay++, '')); });
+      sec.appendChild(grid);
+      board.appendChild(sec);
+    }
+  }
+
   ORDER.forEach(g => {
     const items = APPS.filter(a => a.group === g &&
       (a.name.toLowerCase().includes(q) || a.desc.toLowerCase().includes(q) || g.toLowerCase().includes(q)));
@@ -460,20 +524,7 @@ function render(filter = '') {
       <span class="group-line"></span><span class="group-count">${items.length} mod</span></div>`;
     const grid = document.createElement('div');
     grid.className = 'grid';
-    items.forEach(a => {
-      shown++;
-      const t = document.createElement('a');
-      t.className = 'tile';
-      t.href = a.url;
-      if (a.url !== '#') { t.target = '_blank'; t.rel = 'noopener'; }
-      t.setAttribute('aria-label', `${a.name} — ${a.desc}`);
-      t.style.animationDelay = (delay++ * 0.03) + 's';
-      t.innerHTML = `<span class="tile-arrow" aria-hidden="true">↗</span>
-        <span class="tile-ico" aria-hidden="true">${a.icon}</span>
-        <span class="tile-name">${a.name}</span>
-        <span class="tile-desc">${a.desc}</span>`;
-      grid.appendChild(t);
-    });
+    items.forEach(a => { shown++; grid.appendChild(makeTile(a, delay++, q)); });
     sec.appendChild(grid);
     board.appendChild(sec);
   });
@@ -529,8 +580,9 @@ let suggItems = [];   // current suggestion set
 let suggIdx   = -1;   // keyboard-focused index
 
 const SLASH_CMDS = [
-  { icon:'▦', name:'/tasks', desc:'Today\'s task list',  submit:true  },
-  { icon:'◎', name:'/brief', desc:'Daily briefing',      submit:true  },
+  { icon:'▦', name:'/tasks', desc:'Today\'s task list',     submit:true },
+  { icon:'◎', name:'/brief', desc:'Daily briefing',         submit:true },
+  { icon:'⊕', name:'/ctx',   desc:'Preview context block',  submit:true },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -669,8 +721,29 @@ filterInput.addEventListener('input', e => {
   renderSuggestions(computeSuggestions(val));
 });
 
-/* ---- arrow-key / tab navigation inside the dropdown ---- */
+/* ---- textarea auto-resize ---- */
+filterInput.addEventListener('input', () => {
+  filterInput.style.height = 'auto';
+  filterInput.style.height = Math.min(filterInput.scrollHeight, 200) + 'px';
+});
+
+/* ---- keyboard: Enter = submit, Shift+Enter = newline, arrow/tab for dropdown ---- */
 filterInput.addEventListener('keydown', e => {
+  // Shift+Enter always inserts a newline — let the browser handle it
+  if (e.key === 'Enter' && e.shiftKey) return;
+
+  if (e.key === 'Enter') {
+    if (suggestionsEl.classList.contains('visible') && suggIdx >= 0) {
+      e.preventDefault();
+      accept(suggIdx);
+      return;
+    }
+    // No suggestion focused → submit
+    e.preventDefault();
+    document.getElementById('cmd-form').requestSubmit();
+    return;
+  }
+
   if (!suggestionsEl.classList.contains('visible')) return;
 
   if (e.key === 'ArrowDown') {
@@ -680,19 +753,11 @@ filterInput.addEventListener('keydown', e => {
     e.preventDefault();
     setFocus(Math.max(suggIdx - 1, 0));
   } else if (e.key === 'Tab') {
-    // Tab fills the name without submitting (handy for slash commands)
     if (suggIdx >= 0) {
       e.preventDefault();
-      const item = suggItems[suggIdx];
-      filterInput.value = item.fill ?? item.name;
+      filterInput.value = suggItems[suggIdx].fill ?? suggItems[suggIdx].name;
       hideSuggestions();
     }
-  } else if (e.key === 'Enter') {
-    if (suggIdx >= 0) {
-      e.preventDefault();  // prevent form submit — accept() handles it
-      accept(suggIdx);
-    }
-    // if nothing focused, let the form submit normally
   } else if (e.key === 'Escape') {
     hideSuggestions();
   }
@@ -812,6 +877,7 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
 
   if (/^\/tasks\b/i.test(raw))       { await handleTaskList(); }
   else if (/^\/brief\b/i.test(raw))  { await handleBrief(); }
+  else if (/^\/ctx\b/i.test(raw))    { await handleContextPreview(); }
   else if (/^task[: ]+/i.test(raw)) {
     const content = raw.match(/^task[: ]+(.*)/i)[1].trim();
     if (content) { await handleTaskCreate(content); }
@@ -977,6 +1043,38 @@ async function handleBrief() {
   await handleDispatch(briefPrompt);
   activeMode = savedMode;
   useContext = savedCtx;
+}
+
+async function handleContextPreview() {
+  const card = makeCard('/ctx', '⊕ Context', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  filterInput.value = '';
+  askBtn.disabled = true;
+  render('');
+
+  try {
+    const r = await fetch('/api/context');
+    const data = await r.json();
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'font-family:var(--mono);font-size:11.5px;white-space:pre-wrap;word-break:break-word;' +
+      'color:var(--text-dim);margin:0;padding:12px 16px;background:var(--bg-soft);border-radius:6px;';
+    pre.textContent = data.context || '(empty context)';
+    body.appendChild(pre);
+  } catch (err) {
+    card.classList.remove('loading');
+    body.className = 'exchange-body error';
+    body.innerHTML = `<p style="color:var(--danger);font-family:var(--mono);font-size:12px">
+      Context fetch failed: ${esc(err.message)}</p>`;
+  }
+  askBtn.disabled = false;
+  filterInput.focus();
 }
 
 async function handleDispatch(query) {
