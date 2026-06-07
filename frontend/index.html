@@ -66,6 +66,18 @@ body::before{
 .dot.idle{background:var(--text-faint)}
 .chip-detail{color:var(--text-faint);margin-left:2px}
 
+/* ---- mode selector ---- */
+.modes{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 4px 14px}
+.mode-label{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--text-faint);margin-right:2px}
+.mode-pill{font-family:var(--mono);font-size:11px;letter-spacing:.06em;cursor:pointer;
+  border:1px solid var(--line-hi);background:var(--panel);color:var(--text-dim);
+  padding:5px 12px;border-radius:20px;transition:border-color .12s,color .12s,background .12s;
+  display:flex;align-items:center;gap:6px}
+.mode-pill:hover{border-color:var(--amber-dim);color:var(--text)}
+.mode-pill.active{border-color:var(--amber);color:var(--amber);background:var(--amber-glow)}
+.mode-ico{font-size:13px}
+
 /* ---- command bar ---- */
 .cmd{position:relative;margin:0 4px 12px}
 .cmd form{display:flex;gap:0}
@@ -159,6 +171,10 @@ body::before{
     <div class="chip"><span class="dot idle"></span>Loading status…</div>
   </div>
 
+  <div class="modes" id="modes">
+    <span class="mode-label">mode</span>
+  </div>
+
   <div class="cmd">
     <span class="ico" aria-hidden="true">⌕</span>
     <form id="cmd-form">
@@ -223,6 +239,36 @@ const APPS = [
 ];
 
 const ORDER = ["Command","Daily Ops","Knowledge & Files","Health & Fitness","Build","Comms","Media"];
+
+/* ---- modes (live from /api/modes) ---- */
+let activeMode = 'default';
+
+async function loadModes() {
+  const el = document.getElementById('modes');
+  try {
+    const r = await fetch('/api/modes');
+    const modes = await r.json();
+    if (!modes.length) return;
+    modes.forEach(m => {
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      pill.className = 'mode-pill' + (m.name === activeMode ? ' active' : '');
+      pill.dataset.mode = m.name;
+      pill.title = m.description;
+      pill.innerHTML = `<span class="mode-ico">${m.icon}</span>${m.label}`;
+      pill.addEventListener('click', () => {
+        activeMode = m.name;
+        el.querySelectorAll('.mode-pill').forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+      });
+      el.appendChild(pill);
+    });
+  } catch {
+    // Hey Claude offline — hide the modes row gracefully
+    el.style.display = 'none';
+  }
+}
+loadModes();
 
 /* ---- status (live from /api/status) ---- */
 async function loadStatus() {
@@ -302,6 +348,8 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
   if (!query) return;
 
   // Show loading
+  const modeLabel = document.querySelector(`.mode-pill[data-mode="${activeMode}"]`)?.textContent?.trim() || 'Hey Claude';
+  document.querySelector('.reply-head').textContent = `Hey Claude · ${modeLabel}`;
   replyPanel.classList.add('visible');
   replyBody.className = 'reply-body loading';
   replyBody.textContent = 'Routing to Hey Claude…';
@@ -313,7 +361,7 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
     const r = await fetch('/api/dispatch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, mode: activeMode }),
     });
     const data = await r.json();
 
