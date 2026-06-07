@@ -7,7 +7,7 @@ responses.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -81,7 +81,7 @@ class TestDispatchRoute:
     def test_forwards_query_to_heyclaude(self):
         reply = {"reply": "Hello from Claude", "events": []}
         with patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask:
-            r = client.post("/api/dispatch", json={"query": "Hello"})
+            r = client.post("/api/dispatch", json={"query": "Hello", "use_context": False})
         assert r.status_code == 200
         assert r.json()["reply"] == "Hello from Claude"
         mock_ask.assert_called_once_with("Hello", mode="default")
@@ -89,7 +89,7 @@ class TestDispatchRoute:
     def test_forwards_mode_to_heyclaude(self):
         reply = {"reply": "Deep analysis", "events": []}
         with patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask:
-            r = client.post("/api/dispatch", json={"query": "Explain entropy", "mode": "researcher"})
+            r = client.post("/api/dispatch", json={"query": "Explain entropy", "mode": "researcher", "use_context": False})
         assert r.status_code == 200
         mock_ask.assert_called_once_with("Explain entropy", mode="researcher")
 
@@ -111,6 +111,44 @@ class TestDispatchRoute:
             r = client.post("/api/dispatch", json={"query": "hi"})
         assert r.status_code == 200
         assert r.json()["error"] == "heyclaude_offline"
+
+    def test_context_included_in_response(self):
+        reply = {"reply": "Focus on the PR first.", "events": []}
+        ctx = "[Context · Saturday 07 Jun 2026 · 14:00]\nToday's tasks (1): Review PR"
+        with (
+            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply),
+            patch("backend.services.context.gather", new_callable=AsyncMock, return_value=ctx),
+        ):
+            r = client.post("/api/dispatch", json={"query": "What to do?", "use_context": True})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["context"] == ctx
+        assert data["reply"] == "Focus on the PR first."
+
+    def test_context_skipped_when_disabled(self):
+        reply = {"reply": "Sure.", "events": []}
+        with (
+            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask,
+            patch("backend.services.context.gather", new_callable=AsyncMock, return_value="ctx") as mock_ctx,
+        ):
+            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False})
+        assert r.status_code == 200
+        mock_ctx.assert_not_called()
+        # Query sent to Hey Claude should not be augmented
+        sent_query = mock_ask.call_args.args[0]
+        assert "Context" not in sent_query
+
+    def test_context_augments_query_sent_to_heyclaude(self):
+        reply = {"reply": "Done.", "events": []}
+        ctx = "[Context · Saturday]\nTask A"
+        with (
+            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask,
+            patch("backend.services.context.gather", new_callable=AsyncMock, return_value=ctx),
+        ):
+            r = client.post("/api/dispatch", json={"query": "What now?", "use_context": True})
+        sent_query = mock_ask.call_args.args[0]
+        assert "[Context" in sent_query
+        assert "What now?" in sent_query
 
 
 # ---------------------------------------------------------------------------

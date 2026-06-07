@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from backend.services import github, heyclaude, todoist
+from backend.services import context, github, heyclaude, todoist
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,60 @@ def _mock_post(service_module: str, return_value=None, side_effect=None):
 # ---------------------------------------------------------------------------
 
 
+class TestContextService:
+    def test_gather_includes_timestamp(self, monkeypatch):
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+        result = asyncio.run(context.gather())
+        assert "[Context" in result
+        assert "---" not in result  # no tasks section separator expected in augment
+
+    def test_gather_with_tasks(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        tasks = [{"content": "Write tests"}, {"content": "Review PR"}]
+        with _mock_get("todoist", return_value=_response(200, tasks)):
+            result = asyncio.run(context.gather())
+        assert "Write tests" in result
+        assert "Review PR" in result
+        assert "2" in result
+
+    def test_gather_caps_at_ten_tasks(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        tasks = [{"content": f"Task {i}"} for i in range(15)]
+        with _mock_get("todoist", return_value=_response(200, tasks)):
+            result = asyncio.run(context.gather())
+        assert "+5 more" in result
+
+    def test_augment_prepends_context(self):
+        result = context.augment("What should I focus on?", "[Context · Mon]\nTask A")
+        assert result.startswith("[Context")
+        assert "---" in result
+        assert "What should I focus on?" in result
+
+    def test_augment_empty_context_returns_query_unchanged(self):
+        assert context.augment("hello", "") == "hello"
+        assert context.augment("hello", "   ") == "hello"
+
+
 class TestTodoistService:
+    def test_tasks_no_token_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+        result = asyncio.run(todoist.tasks())
+        assert result == []
+
+    def test_tasks_returns_list(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        items = [{"id": "1", "content": "Buy milk"}, {"id": "2", "content": "Ship it"}]
+        with _mock_get("todoist", return_value=_response(200, items)):
+            result = asyncio.run(todoist.tasks())
+        assert len(result) == 2
+        assert result[0]["content"] == "Buy milk"
+
+    def test_tasks_error_returns_empty(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        with _mock_get("todoist", side_effect=httpx.ConnectError("refused")):
+            result = asyncio.run(todoist.tasks())
+        assert result == []
+
     def test_no_token_returns_idle(self, monkeypatch):
         monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
         result = asyncio.run(todoist.check())

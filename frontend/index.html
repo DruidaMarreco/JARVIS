@@ -98,13 +98,30 @@ body::before{
   background:var(--panel);overflow:hidden;display:none}
 .reply.visible{display:block}
 .reply-head{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
-  color:var(--amber);padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel-hi)}
+  color:var(--amber);padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel-hi);
+  display:flex;align-items:center;justify-content:space-between}
+.reply-ctx{font-family:var(--mono);font-size:9px;letter-spacing:.06em;color:var(--text-faint);
+  cursor:pointer;border:1px solid var(--line);padding:2px 8px;border-radius:4px;
+  transition:border-color .12s,color .12s}
+.reply-ctx:hover{border-color:var(--teal-dim);color:var(--teal)}
+.reply-ctx-block{font-family:var(--mono);font-size:11px;color:var(--text-faint);line-height:1.6;
+  padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(79,200,192,.04);
+  white-space:pre-wrap;display:none}
+.reply-ctx-block.visible{display:block}
 .reply-body{font-family:var(--body);font-size:14px;line-height:1.7;color:var(--text-dim);
   padding:14px 16px;white-space:pre-wrap;max-height:260px;overflow-y:auto}
 .reply-body.loading{color:var(--text-faint);font-family:var(--mono);font-size:12px}
-.reply-actions{font-family:var(--mono);font-size:10px;color:var(--text-faint);padding:8px 16px;
-  border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap}
+.reply-foot{font-family:var(--mono);font-size:10px;color:var(--text-faint);padding:8px 16px;
+  border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 .reply-action-item{display:flex;align-items:center;gap:6px}
+
+/* ---- context toggle ---- */
+.ctx-toggle{font-family:var(--mono);font-size:11px;letter-spacing:.06em;cursor:pointer;
+  border:1px solid var(--line-hi);background:var(--panel);color:var(--text-dim);
+  padding:5px 12px;border-radius:20px;transition:border-color .12s,color .12s,background .12s;
+  display:flex;align-items:center;gap:6px;margin-left:auto}
+.ctx-toggle:hover{border-color:var(--teal-dim);color:var(--text)}
+.ctx-toggle.active{border-color:var(--teal);color:var(--teal);background:rgba(79,200,192,.08)}
 
 /* ---- groups ---- */
 .group{margin-bottom:34px}
@@ -173,6 +190,7 @@ body::before{
 
   <div class="modes" id="modes">
     <span class="mode-label">mode</span>
+    <button type="button" class="ctx-toggle active" id="ctx-toggle" title="Include today's tasks and time as context (c to toggle)">⊕ context</button>
   </div>
 
   <div class="cmd">
@@ -184,9 +202,13 @@ body::before{
   </div>
 
   <div class="reply" id="reply">
-    <div class="reply-head">Hey Claude</div>
+    <div class="reply-head">
+      <span id="reply-title">Hey Claude</span>
+      <button type="button" class="reply-ctx" id="reply-ctx-toggle" hidden>⊕ context used</button>
+    </div>
+    <div class="reply-ctx-block" id="reply-ctx-block"></div>
     <div class="reply-body" id="reply-body"></div>
-    <div class="reply-actions" id="reply-actions"></div>
+    <div class="reply-foot" id="reply-foot"></div>
   </div>
 
   <main id="board"></main>
@@ -242,6 +264,15 @@ const ORDER = ["Command","Daily Ops","Knowledge & Files","Health & Fitness","Bui
 
 /* ---- modes (live from /api/modes) ---- */
 let activeMode = 'default';
+let useContext = true;
+let modeOrder = []; // filled after loadModes()
+
+const ctxToggle = document.getElementById('ctx-toggle');
+ctxToggle.addEventListener('click', () => {
+  useContext = !useContext;
+  ctxToggle.classList.toggle('active', useContext);
+  ctxToggle.textContent = useContext ? '⊕ context' : '⊘ context';
+});
 
 async function loadModes() {
   const el = document.getElementById('modes');
@@ -249,23 +280,26 @@ async function loadModes() {
     const r = await fetch('/api/modes');
     const modes = await r.json();
     if (!modes.length) return;
-    modes.forEach(m => {
+    modeOrder = modes.map(m => m.name);
+    modes.forEach((m, i) => {
       const pill = document.createElement('button');
       pill.type = 'button';
       pill.className = 'mode-pill' + (m.name === activeMode ? ' active' : '');
       pill.dataset.mode = m.name;
-      pill.title = m.description;
+      // Show keyboard shortcut in tooltip
+      pill.title = `${m.description}  [${i + 1}]`;
       pill.innerHTML = `<span class="mode-ico">${m.icon}</span>${m.label}`;
       pill.addEventListener('click', () => {
         activeMode = m.name;
         el.querySelectorAll('.mode-pill').forEach(p => p.classList.remove('active'));
         pill.classList.add('active');
       });
-      el.appendChild(pill);
+      // Insert before the context toggle
+      el.insertBefore(pill, ctxToggle);
     });
   } catch {
-    // Hey Claude offline — hide the modes row gracefully
-    el.style.display = 'none';
+    // Hey Claude offline — hide mode pills, keep ctx toggle
+    document.querySelectorAll('.mode-pill').forEach(p => p.remove());
   }
 }
 loadModes();
@@ -328,18 +362,22 @@ render();
 
 /* ---- command bar ---- */
 const filterInput = document.getElementById('filter');
-const replyPanel = document.getElementById('reply');
-const replyBody = document.getElementById('reply-body');
-const replyActions = document.getElementById('reply-actions');
-const askBtn = document.getElementById('ask-btn');
+const replyPanel  = document.getElementById('reply');
+const replyTitle  = document.getElementById('reply-title');
+const replyCtxBtn = document.getElementById('reply-ctx-toggle');
+const replyCtxBlock = document.getElementById('reply-ctx-block');
+const replyBody   = document.getElementById('reply-body');
+const replyFoot   = document.getElementById('reply-foot');
+const askBtn      = document.getElementById('ask-btn');
 
-// typing → filter tiles (no submit yet)
 filterInput.addEventListener('input', e => {
-  const v = e.target.value;
-  // Only filter if no explicit ask submitted
-  if (!replyPanel.classList.contains('visible')) {
-    render(v);
-  }
+  if (!replyPanel.classList.contains('visible')) render(e.target.value);
+});
+
+replyCtxBtn.addEventListener('click', () => {
+  replyCtxBlock.classList.toggle('visible');
+  replyCtxBtn.textContent = replyCtxBlock.classList.contains('visible')
+    ? '⊖ hide context' : '⊕ context used';
 });
 
 document.getElementById('cmd-form').addEventListener('submit', async e => {
@@ -347,30 +385,39 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
   const query = filterInput.value.trim();
   if (!query) return;
 
-  // Show loading
-  const modeLabel = document.querySelector(`.mode-pill[data-mode="${activeMode}"]`)?.textContent?.trim() || 'Hey Claude';
-  document.querySelector('.reply-head').textContent = `Hey Claude · ${modeLabel}`;
+  const modeLabel = document.querySelector(`.mode-pill[data-mode="${activeMode}"]`)?.textContent?.trim() || 'Voice';
+  replyTitle.textContent = `Hey Claude · ${modeLabel}${useContext ? ' · ⊕' : ''}`;
+  replyCtxBtn.hidden = true;
+  replyCtxBlock.classList.remove('visible');
+  replyCtxBlock.textContent = '';
   replyPanel.classList.add('visible');
   replyBody.className = 'reply-body loading';
-  replyBody.textContent = 'Routing to Hey Claude…';
-  replyActions.innerHTML = '';
+  replyBody.textContent = useContext ? 'Gathering context…' : 'Routing to Hey Claude…';
+  replyFoot.innerHTML = '';
   askBtn.disabled = true;
-  render(''); // clear tile filter while waiting
+  render('');
 
   try {
     const r = await fetch('/api/dispatch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, mode: activeMode }),
+      body: JSON.stringify({ query, mode: activeMode, use_context: useContext }),
     });
     const data = await r.json();
 
     replyBody.className = 'reply-body';
     replyBody.textContent = data.reply || '(no reply)';
 
-    // Show tool actions if any
-    if (data.events && data.events.length) {
-      replyActions.innerHTML = data.events
+    // Context block
+    if (data.context) {
+      replyCtxBlock.textContent = data.context;
+      replyCtxBtn.textContent = '⊕ context used';
+      replyCtxBtn.hidden = false;
+    }
+
+    // Tool action chips
+    if (data.events?.length) {
+      replyFoot.innerHTML = data.events
         .filter(ev => ev.type === 'tool_use')
         .map(ev => `<span class="reply-action-item">🔧 ${ev.name}</span>`)
         .join('');
@@ -383,16 +430,34 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
   }
 });
 
-// Esc clears the reply panel and resets tiles
+/* ---- keyboard shortcuts ---- */
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && replyPanel.classList.contains('visible')) {
-    replyPanel.classList.remove('visible');
-    filterInput.value = '';
-    render('');
+  const active = document.activeElement;
+  const typing = active.tagName === 'INPUT' || active.tagName === 'TEXTAREA';
+
+  // Esc — clear reply panel
+  if (e.key === 'Escape') {
+    if (replyPanel.classList.contains('visible')) {
+      replyPanel.classList.remove('visible');
+      filterInput.value = '';
+      render('');
+    }
+    return;
   }
-  if (e.key === '/' && document.activeElement.id !== 'filter') {
-    e.preventDefault();
-    filterInput.focus();
+
+  if (typing) return; // don't steal keystrokes while the user is typing
+
+  // / — focus command bar
+  if (e.key === '/') { e.preventDefault(); filterInput.focus(); return; }
+
+  // c — toggle context
+  if (e.key === 'c') { ctxToggle.click(); return; }
+
+  // 1-6 — select mode by position
+  const idx = parseInt(e.key, 10) - 1;
+  if (!isNaN(idx) && idx >= 0 && idx < modeOrder.length) {
+    const pill = document.querySelector(`.mode-pill[data-mode="${modeOrder[idx]}"]`);
+    if (pill) pill.click();
   }
 });
 
