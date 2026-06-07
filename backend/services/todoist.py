@@ -56,6 +56,28 @@ async def create_task(content: str, due_string: str = "today") -> dict:
         return {"error": "request_failed", "detail": str(exc)[:80]}
 
 
+async def close_task(task_id: str) -> dict:
+    """Mark a task as complete.
+
+    Returns ``{"ok": True}`` on success or a dict with an ``error`` key.
+    """
+    token = _token()
+    if not token:
+        return {"error": "no_token", "detail": "TODOIST_API_TOKEN is not set"}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(
+                f"{_BASE}/tasks/{task_id}/close",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            r.raise_for_status()
+            return {"ok": True}
+    except httpx.HTTPStatusError as exc:
+        return {"error": "http_error", "detail": f"HTTP {exc.response.status_code}"}
+    except Exception as exc:
+        return {"error": "request_failed", "detail": str(exc)[:80]}
+
+
 async def check() -> dict:
     """Status chip — raises HTTP/connection errors as warn so they surface in the UI."""
     token = _token()

@@ -225,6 +225,27 @@ class TestTodoistCreateTask:
         assert result["error"] == "request_failed"
 
 
+class TestTodoistCloseTask:
+    def test_no_token_returns_error(self, monkeypatch):
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+        result = asyncio.run(todoist.close_task("123"))
+        assert result["error"] == "no_token"
+
+    def test_successful_close(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        # Todoist close returns 204 No Content — empty body
+        with _mock_post("todoist", return_value=_response(204, {})):
+            result = asyncio.run(todoist.close_task("123"))
+        assert result["ok"] is True
+
+    def test_http_error_returns_error_dict(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        with _mock_post("todoist", return_value=_response(404, {"error": "Not Found"})):
+            result = asyncio.run(todoist.close_task("bad-id"))
+        assert result["error"] == "http_error"
+        assert "404" in result["detail"]
+
+
 class TestGithubService:
     def test_ok_response_shows_repo_count(self, monkeypatch):
         monkeypatch.setenv("GITHUB_USERNAME", "testuser")

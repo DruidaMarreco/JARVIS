@@ -224,6 +224,43 @@ class TestTasksRoute:
         assert r.json()["error"] == "no_token"
 
 
+class TestListTasksRoute:
+    def test_returns_tasks_with_count(self):
+        raw = [
+            {"id": "1", "content": "Review PR", "priority": 2, "due": {"string": "today"}},
+            {"id": "2", "content": "Write tests", "priority": 1, "due": None},
+        ]
+        with patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=raw):
+            r = client.get("/api/tasks")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] == 2
+        assert data["tasks"][0]["content"] == "Review PR"
+        assert data["tasks"][0]["priority"] == 2
+
+    def test_empty_list_when_no_tasks(self):
+        with patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=[]):
+            r = client.get("/api/tasks")
+        assert r.status_code == 200
+        assert r.json() == {"tasks": [], "count": 0}
+
+
+class TestCloseTaskRoute:
+    def test_close_task_returns_ok(self):
+        with patch("backend.services.todoist.close_task", new_callable=AsyncMock, return_value={"ok": True}) as mock:
+            r = client.post("/api/tasks/42/close")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        mock.assert_called_once_with("42")
+
+    def test_close_task_error_propagates(self):
+        err = {"error": "http_error", "detail": "HTTP 404"}
+        with patch("backend.services.todoist.close_task", new_callable=AsyncMock, return_value=err):
+            r = client.post("/api/tasks/bad-id/close")
+        assert r.status_code == 200
+        assert r.json()["error"] == "http_error"
+
+
 # ---------------------------------------------------------------------------
 # GET /  (frontend)
 # ---------------------------------------------------------------------------

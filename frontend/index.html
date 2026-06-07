@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
 :root{
   --bg:#0a0e14; --bg-soft:#10151e; --panel:#131a24; --panel-hi:#18212e;
@@ -121,8 +122,40 @@ body::before{
   white-space:pre-wrap;display:none}
 .exchange-ctx-block.visible{display:block}
 .exchange-body{font-family:var(--body);font-size:14px;line-height:1.7;color:var(--text-dim);
-  padding:14px 16px;white-space:pre-wrap}
+  padding:14px 16px}
 .exchange-body.loading{color:var(--text-faint);font-family:var(--mono);font-size:12px}
+/* markdown inside exchange-body */
+.exchange-body h1,.exchange-body h2,.exchange-body h3{font-family:var(--display);color:var(--text);
+  margin:14px 0 6px;letter-spacing:-.01em}
+.exchange-body h1{font-size:18px}.exchange-body h2{font-size:16px}.exchange-body h3{font-size:14px}
+.exchange-body p{margin:0 0 10px}
+.exchange-body ul,.exchange-body ol{padding-left:20px;margin:0 0 10px}
+.exchange-body li{margin-bottom:3px}
+.exchange-body code{font-family:var(--mono);font-size:12px;background:var(--bg-soft);
+  padding:1px 5px;border-radius:3px;color:var(--teal)}
+.exchange-body pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;
+  padding:12px 14px;overflow-x:auto;margin:0 0 12px}
+.exchange-body pre code{background:none;padding:0;color:var(--text-dim);font-size:12px}
+.exchange-body blockquote{border-left:2px solid var(--amber-dim);margin:0 0 10px;
+  padding:4px 12px;color:var(--text-faint)}
+.exchange-body strong{color:var(--text);font-weight:500}
+.exchange-body a{color:var(--teal);text-decoration:none;border-bottom:1px dotted var(--teal-dim)}
+.exchange-body a:hover{color:var(--text)}
+.exchange-body hr{border:none;border-top:1px solid var(--line);margin:12px 0}
+/* task list inside exchange-body */
+.task-list{display:flex;flex-direction:column;gap:6px}
+.task-item{display:flex;align-items:center;gap:10px;padding:6px 0;
+  border-bottom:1px solid var(--line)}
+.task-item:last-child{border-bottom:none}
+.task-item.done .task-content{text-decoration:line-through;color:var(--text-faint);opacity:.5}
+.task-priority{font-family:var(--mono);font-size:10px;width:16px;text-align:center;flex-shrink:0}
+.task-content{flex:1;font-size:13px;color:var(--text-dim)}
+.task-due{font-family:var(--mono);font-size:10px;color:var(--text-faint);flex-shrink:0}
+.task-done-btn{font-family:var(--mono);font-size:10px;cursor:pointer;
+  border:1px solid var(--line);background:none;color:var(--text-faint);
+  padding:2px 7px;border-radius:3px;flex-shrink:0;transition:border-color .1s,color .1s,background .1s}
+.task-done-btn:hover{border-color:var(--teal);color:var(--teal)}
+.task-done-btn:disabled{opacity:.4;cursor:not-allowed}
 .exchange-foot{font-family:var(--mono);font-size:10px;color:var(--text-faint);padding:8px 16px;
   border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 .exchange-foot:empty{display:none}
@@ -209,7 +242,7 @@ body::before{
   <div class="cmd">
     <span class="ico" aria-hidden="true">⌕</span>
     <form id="cmd-form">
-      <input type="text" id="filter" placeholder="Ask Hey Claude… or  task: Buy milk  to capture a task   (/ to focus)" aria-label="Command input">
+      <input type="text" id="filter" placeholder="Ask Hey Claude…  or  task: Buy milk  ·  /tasks  ·  /brief   (/ to focus)" aria-label="Command input">
       <button type="submit" id="ask-btn">Ask →</button>
     </form>
   </div>
@@ -436,7 +469,9 @@ function fillCard(card, data) {
 
   const body = document.getElementById(`ex-${n}-body`);
   body.className = 'exchange-body';
-  body.textContent = data.reply || '(no reply)';
+  const rendered = renderMd(data.reply || '*(no reply)*');
+  if (typeof rendered === 'string') { body.textContent = rendered; }
+  else { body.innerHTML = ''; body.appendChild(rendered); }
 
   if (data.context) {
     const ctxBlock = document.getElementById(`ex-${n}-ctx`);
@@ -466,15 +501,29 @@ function fillCard(card, data) {
   }
 }
 
+/* ---- configured marked options ---- */
+if (typeof marked !== 'undefined') {
+  marked.use({ breaks: true, gfm: true });
+}
+function renderMd(text) {
+  if (typeof marked === 'undefined') return text;
+  // Use a div so we can set innerHTML safely (content is from our own Hey Claude)
+  const div = document.createElement('div');
+  div.innerHTML = marked.parse(text);
+  // Open all links in a new tab
+  div.querySelectorAll('a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  return div;
+}
+
 document.getElementById('cmd-form').addEventListener('submit', async e => {
   e.preventDefault();
   const raw = filterInput.value.trim();
   if (!raw) return;
 
-  // Detect  task:  prefix — create a Todoist task directly
-  const taskMatch = raw.match(/^task[: ]+(.+)/i);
-  if (taskMatch) {
-    await handleTaskCreate(taskMatch[1].trim());
+  if (/^\/tasks\b/i.test(raw))       { await handleTaskList(); }
+  else if (/^\/brief\b/i.test(raw))  { await handleBrief(); }
+  else if (/^task[: ]+(.+)/i.test(raw)) {
+    await handleTaskCreate(raw.match(/^task[: ]+(.+)/i)[1].trim());
   } else {
     await handleDispatch(raw);
   }
@@ -519,6 +568,117 @@ async function handleTaskCreate(content) {
     askBtn.disabled = false;
     filterInput.focus();
   }
+}
+
+async function handleTaskList() {
+  const card = makeCard('/tasks', '✓ Todoist', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.textContent = 'Fetching tasks…';
+
+  filterInput.value = '';
+  askBtn.disabled = true;
+  render('');
+
+  try {
+    const r = await fetch('/api/tasks');
+    const data = await r.json();
+    card.classList.remove('loading');
+
+    if (!data.tasks?.length) {
+      body.className = 'exchange-body';
+      body.textContent = '✓ No tasks due today.';
+    } else {
+      body.className = 'exchange-body';
+      body.innerHTML = '';
+
+      const header = document.createElement('div');
+      header.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--text-faint);margin-bottom:10px;letter-spacing:.06em';
+      header.textContent = `${data.count} task${data.count === 1 ? '' : 's'} today`;
+      body.appendChild(header);
+
+      const list = document.createElement('div');
+      list.className = 'task-list';
+
+      const PRIORITY = { 4: '', 3: '·', 2: '!', 1: '!!' };
+
+      data.tasks.forEach(t => {
+        const item = document.createElement('div');
+        item.className = 'task-item';
+        item.id = `task-item-${t.id}`;
+
+        const pri = document.createElement('span');
+        pri.className = 'task-priority';
+        pri.textContent = PRIORITY[t.priority] ?? '';
+        if (t.priority === 1) pri.style.color = '#e05f5f';
+        else if (t.priority === 2) pri.style.color = 'var(--amber)';
+        else if (t.priority === 3) pri.style.color = 'var(--teal)';
+
+        const content = document.createElement('span');
+        content.className = 'task-content';
+        content.textContent = t.content;
+
+        const due = document.createElement('span');
+        due.className = 'task-due';
+        if (t.due?.string) due.textContent = t.due.string;
+
+        const doneBtn = document.createElement('button');
+        doneBtn.type = 'button';
+        doneBtn.className = 'task-done-btn';
+        doneBtn.textContent = '✓';
+        doneBtn.title = 'Mark complete';
+        doneBtn.addEventListener('click', async () => {
+          doneBtn.disabled = true;
+          try {
+            const res = await fetch(`/api/tasks/${t.id}/close`, { method: 'POST' });
+            const result = await res.json();
+            if (result.ok) {
+              item.classList.add('done');
+              doneBtn.textContent = '✓ done';
+              loadStatus(); // refresh task count in status chips
+            } else {
+              doneBtn.disabled = false;
+              doneBtn.title = result.detail || 'Failed';
+            }
+          } catch {
+            doneBtn.disabled = false;
+          }
+        });
+
+        item.append(pri, content, due, doneBtn);
+        list.appendChild(item);
+      });
+
+      body.appendChild(list);
+    }
+  } catch (err) {
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    body.textContent = 'Error fetching tasks: ' + err;
+  } finally {
+    askBtn.disabled = false;
+    filterInput.focus();
+  }
+}
+
+async function handleBrief() {
+  const briefPrompt =
+    'Give me a structured daily briefing. Summarise my tasks for today with priorities, ' +
+    'note any overdue items I should handle first, and suggest the top 3 things to focus on ' +
+    'given everything in my context. Keep it actionable and concise.';
+  // Force Productivity mode for briefing; context must be on
+  const savedMode = activeMode;
+  const savedCtx  = useContext;
+  activeMode = modeOrder.includes('productivity') ? 'productivity' : activeMode;
+  useContext = true;
+  filterInput.value = '';
+  await handleDispatch(briefPrompt);
+  activeMode = savedMode;
+  useContext = savedCtx;
 }
 
 async function handleDispatch(query) {
