@@ -99,10 +99,15 @@ body::before{
 .thread.visible{display:block}
 .thread-head{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
   color:var(--amber);padding:0 2px 10px;display:flex;align-items:center;justify-content:space-between}
-.thread-clear{font-family:var(--mono);font-size:10px;letter-spacing:.06em;cursor:pointer;
-  border:1px solid var(--line);background:none;color:var(--text-faint);padding:2px 8px;
-  border-radius:4px;transition:border-color .12s,color .12s}
+.thread-actions{display:flex;gap:6px;align-items:center}
+.thread-clear,.thread-export{font-family:var(--mono);font-size:10px;letter-spacing:.06em;
+  cursor:pointer;border:1px solid var(--line);background:none;color:var(--text-faint);
+  padding:2px 8px;border-radius:4px;transition:border-color .12s,color .12s}
 .thread-clear:hover{border-color:var(--amber-dim);color:var(--amber)}
+.thread-export:hover{border-color:var(--teal-dim);color:var(--teal)}
+.thread-export.copied{border-color:var(--teal);color:var(--teal)}
+.exchange-elapsed{font-family:var(--mono);font-size:10px;color:var(--text-faint);
+  margin-left:auto;letter-spacing:.04em}
 
 /* ---- exchange card ---- */
 .exchange{border:1px solid var(--line-hi);border-radius:9px;background:var(--panel);
@@ -286,7 +291,10 @@ body::before{
   <div class="thread" id="thread">
     <div class="thread-head">
       <span>Conversation</span>
-      <button type="button" class="thread-clear" id="thread-clear">clear ×</button>
+      <div class="thread-actions">
+        <button type="button" class="thread-export" id="thread-export" title="Copy as Markdown">↓ md</button>
+        <button type="button" class="thread-clear" id="thread-clear">clear ×</button>
+      </div>
     </div>
     <div id="thread-list"></div>
   </div>
@@ -491,6 +499,28 @@ document.getElementById('thread-clear').addEventListener('click', () => {
   render('');
 });
 
+const exportBtn = document.getElementById('thread-export');
+exportBtn.addEventListener('click', async () => {
+  if (!exchanges.length) return;
+  const now = new Date().toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
+  const lines = [`# JARVIS Conversation — ${now}\n`];
+  exchanges.forEach((ex, i) => {
+    lines.push(`## ${i + 1}. ${ex.query}\n`);
+    if (ex.reply) lines.push(ex.reply + '\n');
+    if (ex.context) lines.push(`\n<details><summary>Context injected</summary>\n\n\`\`\`\n${ex.context}\n\`\`\`\n</details>\n`);
+    lines.push('---\n');
+  });
+  try {
+    await navigator.clipboard.writeText(lines.join('\n'));
+    exportBtn.classList.add('copied');
+    exportBtn.textContent = '✓ copied';
+    setTimeout(() => { exportBtn.classList.remove('copied'); exportBtn.textContent = '↓ md'; }, 2000);
+  } catch {
+    exportBtn.textContent = '✗ failed';
+    setTimeout(() => { exportBtn.textContent = '↓ md'; }, 2000);
+  }
+});
+
 /* ============================================================
    Autocomplete engine
    ============================================================ */
@@ -511,6 +541,16 @@ function getRecentTasks() {
 function addRecentTask(content) {
   const list = [content, ...getRecentTasks().filter(t => t !== content)].slice(0, 20);
   try { localStorage.setItem(RECENT_TASKS_LS, JSON.stringify(list)); } catch {}
+}
+
+/* ---- query history (persisted across sessions) ---- */
+const QUERY_HISTORY_LS = 'jarvis_query_history';
+function getQueryHistory() {
+  try { return JSON.parse(localStorage.getItem(QUERY_HISTORY_LS) || '[]'); } catch { return []; }
+}
+function addQueryHistory(query) {
+  const list = [query, ...getQueryHistory().filter(q => q !== query)].slice(0, 50);
+  try { localStorage.setItem(QUERY_HISTORY_LS, JSON.stringify(list)); } catch {}
 }
 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -573,7 +613,12 @@ function accept(i) {
 }
 
 function computeSuggestions(val) {
-  if (!val) return [];
+  /* ---- empty input → show recent queries ---- */
+  if (!val) {
+    return getQueryHistory().slice(0, 8).map(q => ({
+      icon: '↺', name: q, desc: 'history', submit: true,
+    }));
+  }
 
   /* ---- slash commands ---- */
   if (val.startsWith('/')) {
@@ -597,17 +642,24 @@ function computeSuggestions(val) {
       }));
   }
 
+  /* ---- query history matches (prefix search) ---- */
+  const histMatches = getQueryHistory()
+    .filter(h => h.toLowerCase().includes(val.toLowerCase()) && h.toLowerCase() !== val.toLowerCase())
+    .slice(0, 3)
+    .map(h => ({ icon: '↺', name: h, nameHtml: highlight(h, val), desc: 'history', submit: true }));
+
   /* ---- module tile search (only when thread is not open) ---- */
-  if (thread.classList.contains('visible')) return [];
+  if (thread.classList.contains('visible')) return histMatches;
   const q = val.toLowerCase();
-  return APPS
+  const tileResults = APPS
     .filter(a => a.name.toLowerCase().includes(q) || a.desc.toLowerCase().includes(q) || a.group.toLowerCase().includes(q))
-    .slice(0, 7)
+    .slice(0, 5)
     .map(a => ({
       icon: a.icon, desc: a.group,
       nameHtml: highlight(a.name, val),
       name: a.name, url: a.url,
     }));
+  return [...histMatches, ...tileResults];
 }
 
 /* ---- input event → compute + render suggestions + filter board ---- */
@@ -691,7 +743,7 @@ function makeCard(query, modeLabel) {
   return card;
 }
 
-function fillCard(card, data) {
+function fillCard(card, data, elapsed) {
   const n = card.dataset.n;
   card.classList.remove('loading');
 
@@ -726,6 +778,13 @@ function fillCard(card, data) {
         s.textContent = '🔧 ' + ev.name;
         foot.appendChild(s);
       });
+  }
+  if (elapsed) {
+    const t = document.createElement('span');
+    t.className = 'exchange-elapsed';
+    t.title = 'Response time';
+    t.textContent = elapsed + 's';
+    foot.appendChild(t);
   }
 }
 
@@ -938,7 +997,9 @@ async function handleDispatch(query) {
   filterInput.value = '';
   askBtn.disabled = true;
   render('');
+  addQueryHistory(query);
 
+  const t0 = Date.now();
   try {
     const r = await fetch('/api/dispatch', {
       method: 'POST',
@@ -946,7 +1007,8 @@ async function handleDispatch(query) {
       body: JSON.stringify({ query, mode: activeMode, use_context: useContext, history }),
     });
     const data = await r.json();
-    fillCard(card, data);
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    fillCard(card, data, elapsed);
     exchanges.push({ query, reply: data.reply || '', context: data.context || '' });
   } catch (err) {
     const body = document.getElementById(`ex-${card.dataset.n}-body`);

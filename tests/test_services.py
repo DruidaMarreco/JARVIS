@@ -247,12 +247,19 @@ class TestTodoistCloseTask:
 
 
 class TestGithubService:
-    def test_ok_response_shows_repo_count(self, monkeypatch):
+    def test_ok_response_shows_open_pr_count(self, monkeypatch):
         monkeypatch.setenv("GITHUB_USERNAME", "testuser")
-        with _mock_get("github", return_value=_response(200, {"public_repos": 7})):
+        with _mock_get("github", return_value=_response(200, {"total_count": 3, "items": []})):
             result = asyncio.run(github.check())
         assert result["state"] == "ok"
-        assert "7 public repos" in result["detail"]
+        assert "3 open PRs" in result["detail"]
+
+    def test_singular_pr(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        with _mock_get("github", return_value=_response(200, {"total_count": 1, "items": []})):
+            result = asyncio.run(github.check())
+        assert "1 open PR" in result["detail"]
+        assert "1 open PRs" not in result["detail"]
 
     def test_http_error_returns_warn(self, monkeypatch):
         monkeypatch.setenv("GITHUB_USERNAME", "testuser")
@@ -266,8 +273,8 @@ class TestGithubService:
             result = asyncio.run(github.check())
         assert result["state"] == "warn"
 
-    def test_missing_public_repos_key(self):
-        with _mock_get("github", return_value=_response(200, {})):
+    def test_missing_total_count_key(self):
+        with _mock_get("github", return_value=_response(200, {"items": []})):
             result = asyncio.run(github.check())
         assert result["state"] == "ok"
         assert "?" in result["detail"]

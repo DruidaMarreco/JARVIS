@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 
 import httpx
 
 _API = "https://api.github.com"
 _HEADERS = {"Accept": "application/vnd.github.v3+json"}
+_log = logging.getLogger(__name__)
 
 
 def _username() -> str:
@@ -13,20 +15,23 @@ def _username() -> str:
 
 
 async def check() -> dict:
+    """Status chip — shows open PR count (more actionable than public repo count)."""
     username = _username()
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(
-                f"{_API}/users/{username}",
+                f"{_API}/search/issues",
                 headers=_HEADERS,
+                params={"q": f"is:pr is:open author:{username}"},
             )
             r.raise_for_status()
-            data = r.json()
-            repos = data.get("public_repos", "?")
-            return {"label": "GitHub", "state": "ok", "detail": f"{repos} public repos"}
+            count = r.json().get("total_count", "?")
+            noun = "PR" if count == 1 else "PRs"
+            return {"label": "GitHub", "state": "ok", "detail": f"{count} open {noun}"}
     except httpx.HTTPStatusError as exc:
         return {"label": "GitHub", "state": "warn", "detail": f"HTTP {exc.response.status_code}"}
     except Exception as exc:
+        _log.warning("github.check() failed: %s", exc)
         return {"label": "GitHub", "state": "warn", "detail": str(exc)[:60]}
 
 
