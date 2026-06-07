@@ -150,6 +150,46 @@ class TestDispatchRoute:
         assert "[Context" in sent_query
         assert "What now?" in sent_query
 
+    def test_history_threaded_into_augmented_query(self):
+        reply = {"reply": "Done.", "events": []}
+        history = [
+            {"role": "user", "content": "What should I do?"},
+            {"role": "assistant", "content": "Focus on Task A."},
+        ]
+        with (
+            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask,
+            patch("backend.services.context.gather", new_callable=AsyncMock, return_value=""),
+        ):
+            r = client.post("/api/dispatch", json={"query": "What's next?", "use_context": False, "history": history})
+        assert r.status_code == 200
+        sent_query = mock_ask.call_args.args[0]
+        assert "[Prior conversation]" in sent_query
+        assert "What should I do?" in sent_query
+        assert "Focus on Task A." in sent_query
+        assert "What's next?" in sent_query
+
+    def test_history_not_required(self):
+        reply = {"reply": "ok", "events": []}
+        with patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply):
+            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False})
+        assert r.status_code == 200
+
+    def test_history_not_returned_in_context_field(self):
+        """History is threaded into the query but not echoed back in 'context' (visible in thread)."""
+        reply = {"reply": "Sure.", "events": []}
+        history = [{"role": "user", "content": "Earlier message"}]
+        ctx = "[Context · Sun]\nTask A"
+        with (
+            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply),
+            patch("backend.services.context.gather", new_callable=AsyncMock, return_value=ctx),
+        ):
+            r = client.post("/api/dispatch", json={"query": "hi", "use_context": True, "history": history})
+        assert r.status_code == 200
+        data = r.json()
+        # context field should only contain the gather output, not the history block
+        assert "Earlier message" not in data["context"]
+        assert "[Context" in data["context"]
+
 
 # ---------------------------------------------------------------------------
 # GET /  (frontend)

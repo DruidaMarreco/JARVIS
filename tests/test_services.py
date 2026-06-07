@@ -104,6 +104,28 @@ class TestContextService:
         assert context.augment("hello", "") == "hello"
         assert context.augment("hello", "   ") == "hello"
 
+    def test_format_history_empty_returns_empty_string(self):
+        assert context.format_history([]) == ""
+
+    def test_format_history_labels_roles_correctly(self):
+        history = [
+            {"role": "user", "content": "What should I do?"},
+            {"role": "assistant", "content": "Focus on Task A."},
+        ]
+        result = context.format_history(history)
+        assert "[Prior conversation]" in result
+        assert "You: What should I do?" in result
+        assert "Claude: Focus on Task A." in result
+
+    def test_format_history_preserves_order(self):
+        history = [
+            {"role": "user", "content": "First"},
+            {"role": "assistant", "content": "Second"},
+            {"role": "user", "content": "Third"},
+        ]
+        result = context.format_history(history)
+        assert result.index("First") < result.index("Second") < result.index("Third")
+
 
 class TestTodoistService:
     def test_tasks_no_token_returns_empty(self, monkeypatch):
