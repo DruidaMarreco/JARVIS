@@ -22,6 +22,14 @@ from backend.services import context, github, heyclaude, ollama, todoist, weathe
 # ---------------------------------------------------------------------------
 
 
+async def _collect_stream(gen) -> list[str]:
+    """Drain an async generator into a list of strings."""
+    chunks = []
+    async for chunk in gen:
+        chunks.append(chunk)
+    return chunks
+
+
 def _response(status: int, json_data) -> httpx.Response:
     """Minimal fake httpx.Response with a dummy request so raise_for_status() works."""
     return httpx.Response(status, json=json_data, request=httpx.Request("GET", "http://test"))
@@ -553,6 +561,35 @@ class TestOllamaService:
         with _mock_ollama("list", side_effect=ConnectionRefusedError("refused")):
             result = asyncio.run(ollama.list_models())
         assert result == []
+
+    def test_stream_yields_model_then_tokens_then_done(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_MODEL", "llama3.2")
+
+        async def fake_chat_stream(*args, **kwargs):
+            for word in ["Hello", " world"]:
+                msg = MagicMock(); msg.content = word
+                chunk = MagicMock(); chunk.message = msg
+                yield chunk
+
+        with _mock_ollama("chat", return_value=fake_chat_stream()):
+            chunks = asyncio.run(_collect_stream(ollama.stream("hi")))
+
+        import json as _json
+        events = [_json.loads(c[6:]) for c in chunks if c.startswith("data: ")]
+        assert events[0].get("model") == "llama3.2"
+        tokens = [e["token"] for e in events if "token" in e]
+        assert "Hello" in tokens
+        assert events[-1].get("done") is True
+
+    def test_stream_yields_error_event_on_failure(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_MODEL", "llama3.2")
+        with _mock_ollama("chat", side_effect=ConnectionRefusedError("refused")):
+            chunks = asyncio.run(_collect_stream(ollama.stream("hi")))
+
+        import json as _json
+        events = [_json.loads(c[6:]) for c in chunks if c.startswith("data: ")]
+        assert any("error" in e for e in events)
+        assert events[-1].get("done") is True
 
 
 # ---------------------------------------------------------------------------

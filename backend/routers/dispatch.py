@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..services import context, heyclaude, ollama
+from ..services import context, heyclaude, ollama, weather
 
 router = APIRouter()
 
@@ -18,11 +20,28 @@ class DispatchRequest(BaseModel):
     provider: str = "auto"  # "heyclaude" | "ollama" | "auto"
 
 
+def _ollama_model(req: DispatchRequest) -> str | None:
+    """Extract the Ollama model from the request mode field.
+
+    When the frontend sends provider=ollama it puts the chosen model name in
+    `mode`.  Return None (use env-var default) when mode is the generic
+    'default' sentinel or an empty string.
+    """
+    return req.mode if req.mode not in ("default", "", None) else None
+
+
 @router.get("/context")
 async def get_context() -> dict:
     """Return the current context block so the UI can preview what Hey Claude will see."""
     ctx = await context.gather()
     return {"context": ctx}
+
+
+@router.get("/weather")
+async def get_weather() -> dict:
+    """Return the current weather string from open-meteo."""
+    w = await weather.current()
+    return {"weather": w}
 
 
 @router.get("/modes")
@@ -44,7 +63,7 @@ async def dispatch(req: DispatchRequest) -> dict:
 
     # Route to the requested provider
     if req.provider == "ollama":
-        result = await ollama.ask(augmented)
+        result = await ollama.ask(augmented, model=_ollama_model(req))
     elif req.provider == "heyclaude":
         result = await heyclaude.ask(augmented, mode=req.mode)
     else:
@@ -54,3 +73,24 @@ async def dispatch(req: DispatchRequest) -> dict:
             result = await ollama.ask(augmented)
 
     return {**result, "context": ctx}
+
+
+@router.post("/stream")
+async def stream_dispatch(req: DispatchRequest):
+    """Server-Sent Events endpoint for streaming Ollama responses token-by-token."""
+    ctx = await context.gather() if req.use_context else ""
+    hist_str = context.format_history(req.history)
+    parts = [p for p in [ctx, hist_str] if p]
+    augmented = context.augment(req.query, "\n\n".join(parts))
+
+    async def generate():
+        # Send the context block first so the UI can display it immediately
+        yield f"data: {json.dumps({'context': ctx})}\n\n"
+        async for chunk in ollama.stream(augmented, model=_ollama_model(req)):
+            yield chunk
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

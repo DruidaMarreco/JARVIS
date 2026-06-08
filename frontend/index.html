@@ -168,6 +168,14 @@ body::before{
   border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 .exchange-foot:empty{display:none}
 .reply-action-item{display:flex;align-items:center;gap:6px}
+.copy-reply-btn{font-family:var(--mono);font-size:9px;letter-spacing:.04em;cursor:pointer;
+  border:1px solid var(--line);background:none;color:var(--text-faint);padding:1px 7px;
+  border-radius:3px;transition:border-color .1s,color .1s;margin-left:auto}
+.copy-reply-btn:hover{border-color:var(--teal-dim);color:var(--teal)}
+.copy-reply-btn.copied{border-color:var(--teal);color:var(--teal)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.stream-cursor{display:inline-block;animation:blink .8s step-start infinite;
+  color:var(--amber);font-size:14px;line-height:1;vertical-align:text-bottom}
 
 /* ---- autocomplete dropdown ---- */
 .suggestions{position:absolute;left:0;right:0;top:calc(100% + 4px);
@@ -281,7 +289,7 @@ body::before{
   </header>
 
   <section class="greet">
-    <h1 id="greeting">Welcome back, <span>Simão</span></h1>
+    <h1 id="greeting">Welcome back, <span>…</span></h1>
     <p id="tagline">All systems nominal · select a module to engage</p>
   </section>
 
@@ -334,6 +342,7 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/ctx</span><span class="kbd-desc">Preview context block</span></div>
       <div class="kbd-row"><span class="kbd-key">/prs</span><span class="kbd-desc">Open pull requests</span></div>
       <div class="kbd-row"><span class="kbd-key">/models</span><span class="kbd-desc">Local Ollama models</span></div>
+      <div class="kbd-row"><span class="kbd-key">/weather</span><span class="kbd-desc">Current weather</span></div>
     </div>
   </div>
 
@@ -417,9 +426,10 @@ function togglePin(name) {
 
 /* ---- modes (live from /api/modes) ---- */
 const prefs = loadPrefs();
-let activeMode = prefs.mode || 'default';
-let useContext = prefs.useContext !== undefined ? prefs.useContext : true;
-let provider   = prefs.provider || 'auto';   // "auto" | "ollama" | "heyclaude"
+let activeMode   = prefs.mode || 'default';
+let useContext   = prefs.useContext !== undefined ? prefs.useContext : true;
+let provider     = prefs.provider || 'auto';       // "auto" | "ollama" | "heyclaude"
+let ollamaModel  = prefs.ollamaModel || 'default'; // model name when provider=ollama
 let modeOrder = []; // filled after loadModes()
 
 const ctxToggle = document.getElementById('ctx-toggle');
@@ -437,8 +447,10 @@ const ollamaToggle = document.getElementById('ollama-toggle');
 function applyProviderUI() {
   const usingOllama = provider === 'ollama';
   ollamaToggle.classList.toggle('active', usingOllama);
+  const modelHint = usingOllama && ollamaModel !== 'default' ? ` · ${ollamaModel.split(':')[0]}` : '';
+  ollamaToggle.textContent = `⊛ Ollama${modelHint}`;
   ollamaToggle.title = usingOllama
-    ? 'Using local Ollama — click to switch back to Hey Claude'
+    ? `Using local Ollama${ollamaModel !== 'default' ? ' (' + ollamaModel + ')' : ''} — click to switch back to Hey Claude`
     : 'Use local Ollama AI instead of Hey Claude (requires Ollama running)';
   // Dim Hey Claude mode pills when Ollama is active (they don't apply)
   document.querySelectorAll('.mode-pill').forEach(p => p.classList.toggle('dimmed', usingOllama));
@@ -635,11 +647,12 @@ let suggItems = [];   // current suggestion set
 let suggIdx   = -1;   // keyboard-focused index
 
 const SLASH_CMDS = [
-  { icon:'▦', name:'/tasks',  desc:'Today\'s task list',     submit:true },
-  { icon:'◎', name:'/brief',  desc:'Daily briefing',         submit:true },
-  { icon:'⊕', name:'/ctx',    desc:'Preview context block',  submit:true },
-  { icon:'⑂', name:'/prs',    desc:'Open pull requests',     submit:true },
-  { icon:'⊛', name:'/models', desc:'Local Ollama models',    submit:true },
+  { icon:'▦', name:'/tasks',   desc:'Today\'s task list',     submit:true },
+  { icon:'◎', name:'/brief',   desc:'Daily briefing',         submit:true },
+  { icon:'⊕', name:'/ctx',     desc:'Preview context block',  submit:true },
+  { icon:'⑂', name:'/prs',     desc:'Open pull requests',     submit:true },
+  { icon:'⊛', name:'/models',  desc:'Local Ollama models',    submit:true },
+  { icon:'☁', name:'/weather', desc:'Current weather',        submit:true },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -908,6 +921,26 @@ function fillCard(card, data, elapsed) {
     t.textContent = elapsed + 's';
     foot.appendChild(t);
   }
+  // Copy reply button — always present
+  if (data.reply) {
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'copy-reply-btn';
+    copyBtn.textContent = 'copy';
+    copyBtn.title = 'Copy reply to clipboard';
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(data.reply);
+        copyBtn.textContent = '✓ copied';
+        copyBtn.classList.add('copied');
+        setTimeout(() => { copyBtn.textContent = 'copy'; copyBtn.classList.remove('copied'); }, 2000);
+      } catch {
+        copyBtn.textContent = '✗ failed';
+        setTimeout(() => { copyBtn.textContent = 'copy'; }, 1500);
+      }
+    });
+    foot.appendChild(copyBtn);
+  }
 }
 
 /* ---- configured marked options ---- */
@@ -936,7 +969,8 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
   else if (/^\/brief\b/i.test(raw))  { await handleBrief(); }
   else if (/^\/ctx\b/i.test(raw))    { await handleContextPreview(); }
   else if (/^\/prs\b/i.test(raw))    { await handlePRList(); }
-  else if (/^\/models\b/i.test(raw)) { await handleModelList(); }
+  else if (/^\/models\b/i.test(raw))  { await handleModelList(); }
+  else if (/^\/weather\b/i.test(raw)) { await handleWeather(); }
   else if (/^task[: ]+/i.test(raw)) {
     let content = raw.match(/^task[: ]+(.*)/i)[1].trim();
     let dueString = 'today';
@@ -1144,6 +1178,34 @@ async function handleContextPreview() {
   filterInput.focus();
 }
 
+async function handleWeather() {
+  const card = makeCard('/weather', '☁ Weather', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  filterInput.value = '';
+  askBtn.disabled = true;
+  render('');
+
+  try {
+    const r = await fetch('/api/weather');
+    const data = await r.json();
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    body.style.fontSize = '20px';
+    body.textContent = data.weather || 'Weather unavailable — check WEATHER_LAT/WEATHER_LON in .env';
+  } catch (err) {
+    card.classList.remove('loading');
+    body.className = 'exchange-body error';
+    body.textContent = `Weather fetch failed: ${err.message}`;
+  }
+  askBtn.disabled = false;
+  filterInput.focus();
+}
+
 async function handleModelList() {
   const card = makeCard('/models', '⊛ Ollama', false);
   threadList.appendChild(card);
@@ -1182,7 +1244,8 @@ async function handleModelList() {
         row.title = `Use ${m.name}`;
         row.addEventListener('click', () => {
           provider = 'ollama';
-          savePrefs({ provider });
+          ollamaModel = m.name;
+          savePrefs({ provider, ollamaModel });
           applyProviderUI();
           filterInput.value = '';
           filterInput.focus();
@@ -1254,8 +1317,9 @@ async function handlePRList() {
 }
 
 async function handleDispatch(query) {
+  const modelForOllama = provider === 'ollama' ? ollamaModel : activeMode;
   const modeLabel = provider === 'ollama'
-    ? '⊛ Ollama'
+    ? ('⊛ Ollama' + (ollamaModel !== 'default' ? ' · ' + ollamaModel.split(':')[0] : ''))
     : (document.querySelector(`.mode-pill[data-mode="${activeMode}"]`)?.textContent?.trim() || 'Voice');
 
   // Build history from last 6 exchanges (3 turns)
@@ -1273,6 +1337,12 @@ async function handleDispatch(query) {
   askBtn.disabled = true;
   render('');
   addQueryHistory(query);
+
+  // Use SSE streaming when Ollama is the active provider
+  if (provider === 'ollama') {
+    await _streamOllama(card, query, modelForOllama, history, modeLabel);
+    return;
+  }
 
   const t0 = Date.now();
   try {
@@ -1295,6 +1365,123 @@ async function handleDispatch(query) {
     askBtn.disabled = false;
     filterInput.focus();
   }
+}
+
+async function _streamOllama(card, query, model, history, modeLabel) {
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  const metaEl = document.getElementById(`ex-${n}-meta`);
+
+  // Blinking cursor shown while streaming
+  const cursor = document.createElement('span');
+  cursor.className = 'stream-cursor';
+  cursor.textContent = '▋';
+  body.className = 'exchange-body';
+  body.textContent = '';
+  body.appendChild(cursor);
+  card.classList.remove('loading');
+
+  let fullReply = '';
+  let fullCtx   = '';
+
+  try {
+    const r = await fetch('/api/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, mode: model, use_context: useContext, history, provider: 'ollama' }),
+    });
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();          // keep incomplete last segment
+      for (const part of parts) {
+        if (!part.startsWith('data: ')) continue;
+        let evt;
+        try { evt = JSON.parse(part.slice(6)); } catch { continue; }
+
+        if (evt.context) {
+          fullCtx = evt.context;
+          const ctxBlock = document.getElementById(`ex-${n}-ctx`);
+          ctxBlock.textContent = fullCtx;
+          const ctxBtn = document.createElement('button');
+          ctxBtn.type = 'button';
+          ctxBtn.className = 'exchange-ctx-btn';
+          ctxBtn.textContent = '⊕ ctx';
+          ctxBtn.addEventListener('click', () => {
+            ctxBlock.classList.toggle('visible');
+            ctxBtn.textContent = ctxBlock.classList.contains('visible') ? '⊖ ctx' : '⊕ ctx';
+          });
+          metaEl.appendChild(ctxBtn);
+        }
+
+        if (evt.token) {
+          fullReply += evt.token;
+          // Show plain text while streaming — render markdown at the end
+          cursor.remove();
+          body.textContent = fullReply;
+          body.appendChild(cursor);
+        }
+
+        if (evt.error) {
+          cursor.remove();
+          body.className = 'exchange-body error';
+          body.textContent = `Ollama error: ${evt.error}`;
+          break outer;
+        }
+
+        if (evt.done) break outer;
+      }
+    }
+  } catch (err) {
+    cursor.remove();
+    body.className = 'exchange-body error';
+    body.textContent = `Stream error: ${err.message}`;
+    askBtn.disabled = false;
+    filterInput.focus();
+    return;
+  }
+
+  // Stream done — remove cursor and render final markdown
+  cursor.remove();
+  const rendered = renderMd(fullReply || '*(no reply)*');
+  body.innerHTML = '';
+  if (typeof rendered === 'string') body.textContent = rendered;
+  else body.appendChild(rendered);
+
+  // Add copy button to footer
+  if (fullReply) {
+    const foot = document.getElementById(`ex-${n}-foot`);
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'copy-reply-btn';
+    copyBtn.textContent = 'copy';
+    copyBtn.title = 'Copy reply to clipboard';
+    const replySnapshot = fullReply;
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(replySnapshot);
+        copyBtn.textContent = '✓ copied';
+        copyBtn.classList.add('copied');
+        setTimeout(() => { copyBtn.textContent = 'copy'; copyBtn.classList.remove('copied'); }, 2000);
+      } catch {
+        copyBtn.textContent = '✗ failed';
+        setTimeout(() => { copyBtn.textContent = 'copy'; }, 1500);
+      }
+    });
+    foot.appendChild(copyBtn);
+  }
+
+  exchanges.push({ query, reply: fullReply, context: fullCtx, mode: modeLabel });
+  saveExchanges();
+  askBtn.disabled = false;
+  filterInput.focus();
 }
 
 /* ---- keyboard help overlay ---- */
@@ -1342,6 +1529,9 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---- clock + greeting ---- */
+const NAME_LS = 'jarvis_username';
+let userName = localStorage.getItem(NAME_LS) || 'Simão';
+
 function tick() {
   const d = new Date();
   const p = n => String(n).padStart(2, '0');
@@ -1351,10 +1541,35 @@ function tick() {
     d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
   const h = d.getHours();
   const g = h < 6 ? 'Still up, ' : h < 12 ? 'Good morning, ' : h < 19 ? 'Good afternoon, ' : 'Good evening, ';
-  document.getElementById('greeting').innerHTML = `${g}<span>Simão</span>`;
+  document.getElementById('greeting').innerHTML =
+    `${g}<span id="user-name" title="Click to change name" style="cursor:pointer;border-bottom:1px dotted var(--amber-dim)">${esc(userName)}</span>`;
+  // Re-attach click handler after innerHTML update
+  document.getElementById('user-name')?.addEventListener('click', editUserName);
 }
 tick();
 setInterval(tick, 1000);
+
+function editUserName() {
+  const span = document.getElementById('user-name');
+  if (!span) return;
+  const input = document.createElement('input');
+  input.value = userName;
+  input.style.cssText = 'font-family:var(--display);font-size:inherit;background:none;' +
+    'border:none;border-bottom:1px solid var(--amber);color:var(--text);outline:none;width:120px;';
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+  const save = () => {
+    const v = input.value.trim();
+    if (v) { userName = v; try { localStorage.setItem(NAME_LS, v); } catch {} }
+    tick(); // re-render greeting
+  };
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = userName; input.blur(); }
+  });
+}
 
 /* ---- auto-refresh status every 60 s ---- */
 setInterval(loadStatus, 60_000);

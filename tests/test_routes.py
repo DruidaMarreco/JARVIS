@@ -338,6 +338,58 @@ class TestDispatchOllamaProvider:
         mock_ollama.assert_not_called()
 
 
+class TestWeatherRoute:
+    def test_returns_weather_string(self):
+        with patch("backend.services.weather.current", new_callable=AsyncMock, return_value="22°C, sunny"):
+            r = client.get("/api/weather")
+        assert r.status_code == 200
+        assert r.json()["weather"] == "22°C, sunny"
+
+    def test_returns_empty_string_when_offline(self):
+        with patch("backend.services.weather.current", new_callable=AsyncMock, return_value=""):
+            r = client.get("/api/weather")
+        assert r.status_code == 200
+        assert r.json() == {"weather": ""}
+
+
+class TestStreamRoute:
+    def test_stream_returns_event_stream(self):
+        async def fake_stream(prompt, model=None):
+            yield 'data: {"model": "llama3.2"}\n\n'
+            yield 'data: {"token": "Hello"}\n\n'
+            yield 'data: {"done": true}\n\n'
+
+        with (
+            patch("backend.services.ollama.stream", return_value=fake_stream("hi")),
+            patch("backend.services.context.gather", new_callable=AsyncMock, return_value=""),
+        ):
+            r = client.post("/api/stream", json={"query": "hi", "use_context": False, "provider": "ollama"})
+        assert r.status_code == 200
+        assert "text/event-stream" in r.headers["content-type"]
+        assert "token" in r.text
+
+    def test_stream_includes_context_event(self):
+        ctx = "[Context · Mon · 20°C]"
+
+        async def fake_stream(prompt, model=None):
+            yield 'data: {"done": true}\n\n'
+
+        with (
+            patch("backend.services.ollama.stream", return_value=fake_stream("hi")),
+            patch("backend.services.context.gather", new_callable=AsyncMock, return_value=ctx),
+        ):
+            r = client.post("/api/stream", json={"query": "hi", "use_context": True, "provider": "ollama"})
+        import json as _json
+        events = [
+            _json.loads(line[6:])
+            for line in r.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        ctx_event = next((e for e in events if "context" in e), None)
+        assert ctx_event is not None
+        assert ctx_event["context"] == ctx
+
+
 class TestPRsRoute:
     def test_returns_prs_list_and_count(self):
         prs = [

@@ -10,8 +10,10 @@ Configure via env vars:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from typing import AsyncIterator
 
 from ollama import AsyncClient
 
@@ -56,6 +58,34 @@ async def list_models() -> list[dict]:
     except Exception as exc:
         _log.warning("ollama.list_models() failed: %s", exc)
         return []
+
+
+async def stream(prompt: str, model: str | None = None) -> AsyncIterator[str]:
+    """Async generator yielding SSE-formatted strings for streaming Ollama responses.
+
+    Emits:
+      data: {"model": "<name>"}      — first, so the UI knows which model is running
+      data: {"token": "<chunk>"}     — once per token as they arrive
+      data: {"error": "<msg>"}       — on failure
+      data: {"done": true}           — always last
+    """
+    chosen = model or _default_model()
+    yield f"data: {json.dumps({'model': chosen})}\n\n"
+    try:
+        client = AsyncClient(host=_host())
+        async for chunk in await client.chat(
+            model=chosen,
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        ):
+            msg = getattr(chunk, "message", None)
+            token: str = getattr(msg, "content", "") if msg is not None else ""
+            if token:
+                yield f"data: {json.dumps({'token': token})}\n\n"
+    except Exception as exc:
+        _log.warning("ollama.stream() failed (model=%s): %s", chosen, exc)
+        yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+    yield f"data: {json.dumps({'done': True})}\n\n"
 
 
 async def ask(prompt: str, model: str | None = None) -> dict:
