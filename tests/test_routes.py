@@ -452,6 +452,37 @@ class TestPRsRoute:
         assert {"number", "title", "repo", "url", "updated_at"} <= item.keys()
 
 
+class TestSearchTasksRoute:
+    def test_returns_matching_tasks(self):
+        raw = [{"id": "1", "content": "Plan meeting", "priority": 2, "due": None, "project_id": "p1"}]
+        projects = {"p1": "Work"}
+        with (
+            patch("backend.services.todoist.search", new_callable=AsyncMock, return_value=raw) as mock_search,
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value=projects),
+        ):
+            r = client.get("/api/tasks/search?q=meeting")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] == 1
+        assert data["tasks"][0]["content"] == "Plan meeting"
+        assert data["tasks"][0]["project"] == "Work"
+        assert data["query"] == "meeting"
+        mock_search.assert_awaited_once_with("meeting")
+
+    def test_empty_results(self):
+        with (
+            patch("backend.services.todoist.search", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value={}),
+        ):
+            r = client.get("/api/tasks/search?q=nothinghere")
+        assert r.status_code == 200
+        assert r.json()["tasks"] == []
+
+    def test_missing_q_returns_422(self):
+        r = client.get("/api/tasks/search")
+        assert r.status_code == 422
+
+
 class TestEventsRoute:
     def test_returns_events_list_and_count(self):
         events = [

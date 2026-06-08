@@ -292,6 +292,39 @@ class TestTodoistCreateTask:
         assert result["error"] == "request_failed"
 
 
+class TestTodoistSearch:
+    def test_no_token_returns_empty(self, monkeypatch):
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+        result = asyncio.run(todoist.search("meeting"))
+        assert result == []
+
+    def test_empty_query_returns_empty(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        result = asyncio.run(todoist.search("   "))
+        assert result == []
+
+    def test_returns_matching_tasks(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        items = [{"id": "1", "content": "Plan the meeting"}]
+        with _mock_get("todoist", return_value=_response(200, items)):
+            result = asyncio.run(todoist.search("meeting"))
+        assert len(result) == 1
+        assert result[0]["content"] == "Plan the meeting"
+
+    def test_error_returns_empty_list(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        with _mock_get("todoist", side_effect=httpx.ConnectError("refused")):
+            result = asyncio.run(todoist.search("anything"))
+        assert result == []
+
+    def test_limit_respected(self, monkeypatch):
+        monkeypatch.setenv("TODOIST_API_TOKEN", "tok")
+        items = [{"id": str(i), "content": f"Task {i}"} for i in range(10)]
+        with _mock_get("todoist", return_value=_response(200, items)):
+            result = asyncio.run(todoist.search("task", limit=3))
+        assert len(result) == 3
+
+
 class TestTodoistCloseTask:
     def test_no_token_returns_error(self, monkeypatch):
         monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
@@ -712,6 +745,49 @@ class TestOllamaService:
         events = [_json.loads(c[6:]) for c in chunks if c.startswith("data: ")]
         assert any("error" in e for e in events)
         assert events[-1].get("done") is True
+
+    def test_stream_includes_history_in_messages(self, monkeypatch):
+        """History turns must appear as structured messages before the user prompt."""
+        monkeypatch.setenv("OLLAMA_MODEL", "llama3.2")
+        captured_calls: list[dict] = []
+
+        async def fake_chat(**kwargs):
+            captured_calls.append(kwargs)
+
+            async def _empty():
+                return
+                yield  # pragma: no cover
+
+            return _empty()
+
+        mock_instance = AsyncMock()
+        mock_instance.chat.side_effect = fake_chat
+        with patch("backend.services.ollama.AsyncClient", return_value=mock_instance):
+            history = [
+                {"role": "user", "content": "What is Python?"},
+                {"role": "assistant", "content": "A programming language."},
+            ]
+            asyncio.run(_collect_stream(ollama.stream("Tell me more", history=history)))
+
+        assert captured_calls, "chat() was never called"
+        messages = captured_calls[0]["messages"]
+        roles = [m["role"] for m in messages]
+        assert roles == ["user", "assistant", "user"]
+        assert messages[-1]["content"] == "Tell me more"
+
+    def test_build_messages_filters_invalid_roles(self):
+        """_build_messages should only include user/assistant roles."""
+        from backend.services.ollama import _build_messages
+        history = [
+            {"role": "system", "content": "Be helpful"},  # filtered out
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+        msgs = _build_messages("Follow-up", history)
+        assert msgs[0]["role"] == "user"
+        assert msgs[1]["role"] == "assistant"
+        assert msgs[-1] == {"role": "user", "content": "Follow-up"}
+        assert len(msgs) == 3  # system entry dropped
 
 
 # ---------------------------------------------------------------------------

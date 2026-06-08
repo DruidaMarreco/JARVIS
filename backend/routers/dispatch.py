@@ -93,7 +93,7 @@ async def stream_dispatch(req: DispatchRequest):
     async def generate():
         # Send the context block first so the UI can display it immediately
         yield f"data: {json.dumps({'context': ctx})}\n\n"
-        async for chunk in ollama.stream(augmented, model=_ollama_model(req)):
+        async for chunk in ollama.stream(augmented, model=_ollama_model(req), history=req.history):
             yield chunk
 
     return StreamingResponse(

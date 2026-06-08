@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, field_validator
 
 from ..services import todoist
@@ -50,6 +50,35 @@ async def list_tasks() -> dict:
             for t in task_list
         ],
         "count": len(task_list),
+    }
+
+
+@router.get("/tasks/search")
+async def search_tasks(
+    q: str = Query(description="Todoist filter query string or plain keyword"),
+) -> dict:
+    """Search Todoist tasks by filter query.
+
+    Plain keywords search task content; Todoist filter syntax (``#Project``,
+    ``today``, ``p1``, etc.) is also accepted.
+    """
+    task_list, project_map = await asyncio.gather(
+        todoist.search(q),
+        todoist.projects(),
+    )
+    return {
+        "tasks": [
+            {
+                "id": t.get("id", ""),
+                "content": t.get("content", "untitled"),
+                "priority": t.get("priority", 1),
+                "due": t.get("due"),
+                "project": project_map.get(t.get("project_id", ""), ""),
+            }
+            for t in task_list
+        ],
+        "count": len(task_list),
+        "query": q,
     }
 
 

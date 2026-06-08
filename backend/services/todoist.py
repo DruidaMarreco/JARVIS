@@ -33,6 +33,33 @@ async def tasks() -> list[dict]:
         return []
 
 
+async def search(query: str, limit: int = 20) -> list[dict]:
+    """Search all Todoist tasks matching ``query`` using the Todoist filter syntax.
+
+    The query is used verbatim as a Todoist filter string, so it can be a plain
+    keyword (Todoist searches task content) or a filter expression like
+    ``#Work & today``.  Returns an empty list on any failure.
+    """
+    token = _token()
+    if not token:
+        return []
+    q = query.strip()
+    if not q:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(
+                f"{_BASE}/tasks",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"filter": q},
+            )
+            r.raise_for_status()
+            return r.json()[:limit]
+    except Exception:
+        _log.warning("todoist.search(%r) failed", query, exc_info=True)
+        return []
+
+
 async def projects() -> dict[str, str]:
     """Return a mapping of project_id → project_name.
 

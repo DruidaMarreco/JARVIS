@@ -60,8 +60,31 @@ async def list_models() -> list[dict]:
         return []
 
 
-async def stream(prompt: str, model: str | None = None) -> AsyncIterator[str]:
+def _build_messages(prompt: str, history: list[dict]) -> list[dict]:
+    """Build a messages array for the Ollama chat API.
+
+    ``history`` items are ``{role, content}`` dicts (same shape as OpenAI).
+    The current user prompt is appended last.
+    """
+    msgs: list[dict] = []
+    for h in history:
+        role = h.get("role", "")
+        content = h.get("content", "")
+        if role in ("user", "assistant") and content:
+            msgs.append({"role": role, "content": content})
+    msgs.append({"role": "user", "content": prompt})
+    return msgs
+
+
+async def stream(
+    prompt: str,
+    model: str | None = None,
+    history: list[dict] | None = None,
+) -> AsyncIterator[str]:
     """Async generator yielding SSE-formatted strings for streaming Ollama responses.
+
+    ``history`` is a list of ``{role, content}`` dicts representing prior turns.
+    They are prepended to the messages array so Ollama can reference them.
 
     Emits:
       data: {"model": "<name>"}      — first, so the UI knows which model is running
@@ -71,11 +94,12 @@ async def stream(prompt: str, model: str | None = None) -> AsyncIterator[str]:
     """
     chosen = model or _default_model()
     yield f"data: {json.dumps({'model': chosen})}\n\n"
+    messages = _build_messages(prompt, history or [])
     try:
         client = AsyncClient(host=_host())
         async for chunk in await client.chat(
             model=chosen,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             stream=True,
         ):
             msg = getattr(chunk, "message", None)

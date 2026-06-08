@@ -161,6 +161,8 @@ body::before{
 .task-project{font-family:var(--mono);font-size:10px;color:var(--text-faint);
   background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:3px;
   padding:1px 5px;flex-shrink:0;white-space:nowrap}
+.task-due.overdue{color:#e05f5f;font-weight:600}
+.task-item.overdue-item .task-content>span:first-child{color:var(--text-hi)}
 .task-due{font-family:var(--mono);font-size:10px;color:var(--text-faint);flex-shrink:0}
 .task-done-btn{font-family:var(--mono);font-size:10px;cursor:pointer;
   border:1px solid var(--line);background:none;color:var(--text-faint);
@@ -383,6 +385,7 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/ctx</span><span class="kbd-desc">Preview context block</span></div>
       <div class="kbd-row"><span class="kbd-key">/prs</span><span class="kbd-desc">Open pull requests</span></div>
       <div class="kbd-row"><span class="kbd-key">/events</span><span class="kbd-desc">Recent GitHub activity</span></div>
+      <div class="kbd-row"><span class="kbd-key">/todo …</span><span class="kbd-desc">Search all Todoist tasks</span></div>
       <div class="kbd-row"><span class="kbd-key">/models</span><span class="kbd-desc">Local Ollama models</span></div>
       <div class="kbd-row"><span class="kbd-key">/weather</span><span class="kbd-desc">Current weather</span></div>
       <div class="kbd-row"><span class="kbd-key">note: …</span><span class="kbd-desc">Add to Todoist inbox (no date)</span></div>
@@ -411,7 +414,8 @@ body::before{
 
       <div class="settings-group">
         <label class="settings-label">Default Ollama model</label>
-        <input type="text" class="settings-input" id="set-model" placeholder="llama3.2" maxlength="80">
+        <input type="text" class="settings-input" id="set-model" placeholder="llama3.2" maxlength="80" list="ollama-model-list" autocomplete="off">
+        <datalist id="ollama-model-list"></datalist>
         <span class="settings-hint">Used when Ollama provider is active. Leave blank to use server default.</span>
       </div>
 
@@ -746,13 +750,14 @@ let suggItems = [];   // current suggestion set
 let suggIdx   = -1;   // keyboard-focused index
 
 const SLASH_CMDS = [
-  { icon:'▦', name:'/tasks',   desc:'Today\'s task list',     submit:true },
-  { icon:'◎', name:'/brief',   desc:'Daily briefing',         submit:true },
-  { icon:'⊕', name:'/ctx',     desc:'Preview context block',  submit:true },
-  { icon:'⑂', name:'/prs',     desc:'Open pull requests',     submit:true },
-  { icon:'⌥', name:'/events',  desc:'Recent GitHub activity', submit:true },
-  { icon:'⊛', name:'/models',  desc:'Local Ollama models',    submit:true },
-  { icon:'☁', name:'/weather', desc:'Current weather',        submit:true },
+  { icon:'▦', name:'/tasks',   desc:'Today\'s task list',          submit:true },
+  { icon:'◎', name:'/brief',   desc:'Daily briefing',              submit:true },
+  { icon:'⊕', name:'/ctx',     desc:'Preview context block',       submit:true },
+  { icon:'⑂', name:'/prs',     desc:'Open pull requests',          submit:true },
+  { icon:'⌥', name:'/events',  desc:'Recent GitHub activity',      submit:true },
+  { icon:'⊛', name:'/models',  desc:'Local Ollama models',         submit:true },
+  { icon:'☁', name:'/weather', desc:'Current weather',             submit:true },
+  { icon:'🔍', name:'/todo',    desc:'/todo <keyword>  search tasks', submit:false },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -1070,6 +1075,11 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
   else if (/^\/ctx\b/i.test(raw))    { await handleContextPreview(); }
   else if (/^\/prs\b/i.test(raw))    { await handlePRList(); }
   else if (/^\/events\b/i.test(raw)) { await handleEventsList(); }
+  else if (/^\/todo\b/i.test(raw)) {
+    const q = raw.replace(/^\/todo\s*/i, '').trim();
+    if (q) { await handleTodoSearch(q); }
+    else { filterInput.value = '/todo '; filterInput.focus(); }
+  }
   else if (/^\/models\b/i.test(raw))  { await handleModelList(); }
   else if (/^\/weather\b/i.test(raw)) { await handleWeather(); }
   else if (/^task[: ]+/i.test(raw)) {
@@ -1172,10 +1182,14 @@ async function handleTaskList() {
       list.className = 'task-list';
 
       const PRIORITY = { 4: '', 3: '·', 2: '!', 1: '!!' };
+      const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
 
       data.tasks.forEach(t => {
+        const dueDate = t.due?.date || null;
+        const isOverdue = dueDate && dueDate < todayStr;
+
         const item = document.createElement('div');
-        item.className = 'task-item';
+        item.className = 'task-item' + (isOverdue ? ' overdue-item' : '');
         item.id = `task-item-${t.id}`;
 
         const pri = document.createElement('span');
@@ -1200,8 +1214,8 @@ async function handleTaskList() {
         }
 
         const due = document.createElement('span');
-        due.className = 'task-due';
-        if (t.due?.string) due.textContent = t.due.string;
+        due.className = 'task-due' + (isOverdue ? ' overdue' : '');
+        if (t.due?.string) due.textContent = isOverdue ? `⚑ ${t.due.string}` : t.due.string;
 
         const doneBtn = document.createElement('button');
         doneBtn.type = 'button';
@@ -1500,6 +1514,83 @@ async function handleEventsList() {
   filterInput.focus();
 }
 
+async function handleTodoSearch(query) {
+  const card = makeCard(`/todo ${query}`, '🔍 Tasks', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  filterInput.value = '';
+  askBtn.disabled = true;
+  render('');
+
+  const PRIORITY = { 4: '', 3: '·', 2: '!', 1: '!!' };
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  try {
+    const r = await fetch(`/api/tasks/search?q=${encodeURIComponent(query)}`);
+    const data = await r.json();
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+
+    if (!data.tasks?.length) {
+      body.innerHTML = `<p style="color:var(--text-dim);font-family:var(--mono);font-size:12px">No tasks found for <em>${esc(query)}</em>.</p>`;
+    } else {
+      const header = document.createElement('div');
+      header.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--text-faint);margin-bottom:10px;letter-spacing:.06em';
+      header.textContent = `${data.count} task${data.count === 1 ? '' : 's'} matching "${data.query}"`;
+      body.appendChild(header);
+
+      const list = document.createElement('div');
+      list.className = 'task-list';
+
+      data.tasks.forEach(t => {
+        const dueDate = t.due?.date || null;
+        const isOverdue = dueDate && dueDate < todayStr;
+
+        const item = document.createElement('div');
+        item.className = 'task-item' + (isOverdue ? ' overdue-item' : '');
+        item.id = `search-task-${t.id}`;
+
+        const pri = document.createElement('span');
+        pri.className = 'task-priority';
+        pri.textContent = PRIORITY[t.priority] ?? '';
+        if (t.priority === 1) pri.style.color = '#e05f5f';
+        else if (t.priority === 2) pri.style.color = 'var(--amber)';
+        else if (t.priority === 3) pri.style.color = 'var(--teal)';
+
+        const contentWrap = document.createElement('span');
+        contentWrap.className = 'task-content';
+        const content = document.createElement('span');
+        content.textContent = t.content;
+        contentWrap.appendChild(content);
+        if (t.project && t.project !== 'Inbox') {
+          const proj = document.createElement('span');
+          proj.className = 'task-project';
+          proj.textContent = t.project;
+          contentWrap.appendChild(proj);
+        }
+
+        const due = document.createElement('span');
+        due.className = 'task-due' + (isOverdue ? ' overdue' : '');
+        if (t.due?.string) due.textContent = isOverdue ? `⚑ ${t.due.string}` : t.due.string;
+
+        item.append(pri, contentWrap, due);
+        list.appendChild(item);
+      });
+      body.appendChild(list);
+    }
+  } catch (err) {
+    card.classList.remove('loading');
+    body.className = 'exchange-body error';
+    body.innerHTML = `<p style="color:var(--danger);font-family:var(--mono);font-size:12px">Search failed: ${esc(err.message)}</p>`;
+  }
+  askBtn.disabled = false;
+  filterInput.focus();
+}
+
 async function handleDispatch(query) {
   const modelForOllama = provider === 'ollama' ? ollamaModel : activeMode;
   const modeLabel = provider === 'ollama'
@@ -1565,6 +1656,7 @@ async function _streamOllama(card, query, model, history, modeLabel) {
   body.appendChild(cursor);
   card.classList.remove('loading');
 
+  const t0 = Date.now();   // for elapsed time display
   let fullReply = '';
   let fullCtx   = '';
 
@@ -1661,6 +1753,13 @@ async function _streamOllama(card, query, model, history, modeLabel) {
     });
     foot.appendChild(copyBtn);
   }
+
+  // Show elapsed time in exchange meta (parity with Hey Claude path)
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+  const elapsedEl = document.createElement('span');
+  elapsedEl.className = 'exchange-elapsed';
+  elapsedEl.textContent = `${elapsed}s`;
+  metaEl.appendChild(elapsedEl);
 
   exchanges.push({ query, reply: fullReply, context: fullCtx, mode: modeLabel });
   saveExchanges();
@@ -1782,9 +1881,21 @@ function openSettings() {
   document.getElementById('set-name').value  = localStorage.getItem(NAME_LS) || userName;
   document.getElementById('set-lat').value   = s.weatherLat || '';
   document.getElementById('set-lon').value   = s.weatherLon || '';
-  document.getElementById('set-model').value = s.ollamaModel || ollamaModel !== 'default' ? (s.ollamaModel || ollamaModel) : '';
+  document.getElementById('set-model').value = s.ollamaModel || (ollamaModel !== 'default' ? ollamaModel : '');
   settingsOverlay.classList.add('visible');
   document.getElementById('set-name').focus();
+
+  // Populate Ollama model datalist from API (non-blocking)
+  fetch('/api/ollama/models').then(r => r.json()).then(data => {
+    const dl = document.getElementById('ollama-model-list');
+    dl.innerHTML = '';
+    (data.models || []).forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.name;
+      opt.label = m.size_gb ? `${m.size_gb} GB` : '';
+      dl.appendChild(opt);
+    });
+  }).catch(() => {}); // silently ignore if Ollama is offline
 }
 
 function closeSettings() {
@@ -1848,6 +1959,23 @@ document.addEventListener('visibilitychange', () => {
     });
     if (exchanges.length) thread.classList.add('visible');
   } catch {}
+})();
+
+/* ---- morning auto-brief ---- */
+(function maybeAutoBrief() {
+  const BRIEF_LS = 'jarvis_last_brief';
+  const h = new Date().getHours();
+  if (h < 6 || h >= 12) return;                    // only 06:00–11:59
+  const lastKey = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  try {
+    if (localStorage.getItem(BRIEF_LS) === lastKey) return; // already run today
+  } catch {}
+  if (exchanges.length) return;                     // thread already has content
+  // Slight delay so the page renders fully before the brief fires
+  setTimeout(async () => {
+    try { localStorage.setItem(BRIEF_LS, lastKey); } catch {}
+    await handleBrief();
+  }, 800);
 })();
 </script>
 </body>
