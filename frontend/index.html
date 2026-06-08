@@ -105,12 +105,21 @@ body::before{
 .thread-head{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;
   color:var(--amber);padding:0 2px 10px;display:flex;align-items:center;justify-content:space-between}
 .thread-actions{display:flex;gap:6px;align-items:center}
-.thread-clear,.thread-export,.thread-download{font-family:var(--mono);font-size:10px;letter-spacing:.06em;
+.thread-clear,.thread-export,.thread-download,.thread-tool-btn{font-family:var(--mono);font-size:10px;letter-spacing:.06em;
   cursor:pointer;border:1px solid var(--line);background:none;color:var(--text-faint);
   padding:2px 8px;border-radius:4px;transition:border-color .12s,color .12s}
 .thread-clear:hover{border-color:var(--amber-dim);color:var(--amber)}
-.thread-export:hover,.thread-download:hover{border-color:var(--teal-dim);color:var(--teal)}
+.thread-export:hover,.thread-download:hover,.thread-tool-btn:hover{border-color:var(--teal-dim);color:var(--teal)}
 .thread-export.copied,.thread-download.saved{border-color:var(--teal);color:var(--teal)}
+/* --- starred / find --- */
+.exchange.starred{border-left:2px solid var(--amber-dim)}
+.exchange.find-dim{opacity:.25;transition:opacity .2s}
+.exchange.find-match{box-shadow:0 0 0 1px var(--teal-dim)}
+.star-btn{font-family:var(--mono);font-size:11px;letter-spacing:0;cursor:pointer;
+  border:none;background:none;color:var(--text-faint);padding:0 4px;
+  transition:color .1s;line-height:1}
+.star-btn:hover{color:var(--amber)}
+.star-btn.starred-on{color:var(--amber)}
 .exchange-elapsed{font-family:var(--mono);font-size:10px;color:var(--text-faint);
   margin-left:auto;letter-spacing:.04em}
 
@@ -379,6 +388,8 @@ body::before{
     <div class="thread-head">
       <span>Conversation</span>
       <div class="thread-actions">
+        <button type="button" class="thread-tool-btn" id="tt-fold" title="Collapse all cards">⊟ fold</button>
+        <button type="button" class="thread-tool-btn" id="tt-open" title="Expand all cards">⊞ open</button>
         <button type="button" class="thread-export" id="thread-export" title="Copy as Markdown">↓ copy md</button>
         <button type="button" class="thread-download" id="thread-download" title="Download as .md file">↓ save</button>
         <button type="button" class="thread-clear" id="thread-clear">clear ×</button>
@@ -412,6 +423,9 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/models</span><span class="kbd-desc">Local Ollama models</span></div>
       <div class="kbd-row"><span class="kbd-key">/weather</span><span class="kbd-desc">Current weather</span></div>
       <div class="kbd-row"><span class="kbd-key">/recap</span><span class="kbd-desc">Summarize thread with Ollama</span></div>
+      <div class="kbd-row"><span class="kbd-key">/starred</span><span class="kbd-desc">Browse starred exchanges</span></div>
+      <div class="kbd-row"><span class="kbd-key">/find …</span><span class="kbd-desc">Keyword search through thread</span></div>
+      <div class="kbd-row"><span class="kbd-key">/clear</span><span class="kbd-desc">Clear conversation thread</span></div>
       <div class="kbd-row"><span class="kbd-key">note: …</span><span class="kbd-desc">Add to Todoist inbox (no date)</span></div>
     </div>
   </div>
@@ -520,6 +534,55 @@ const MAX_EXCHANGES = 20; // max exchanges kept in localStorage
 
 function saveExchanges() {
   try { localStorage.setItem(EXCHANGES_LS, JSON.stringify(exchanges.slice(-MAX_EXCHANGES))); } catch {}
+}
+
+/* ---- starred exchanges (persisted across sessions) ---- */
+const STARRED_LS = 'jarvis_starred';
+const MAX_STARRED = 50;
+
+function getStarred() {
+  try { return JSON.parse(localStorage.getItem(STARRED_LS) || '[]'); } catch { return []; }
+}
+function isStarred(query) {
+  const key = query.slice(0, 150);
+  return getStarred().some(s => s.query === key);
+}
+function addStarred(query, reply) {
+  const key = query.slice(0, 150);
+  const list = getStarred().filter(s => s.query !== key);
+  list.unshift({ query: key, reply: (reply || '').slice(0, 200) });
+  try { localStorage.setItem(STARRED_LS, JSON.stringify(list.slice(0, MAX_STARRED))); } catch {}
+}
+function removeStarred(query) {
+  const key = query.slice(0, 150);
+  const list = getStarred().filter(s => s.query !== key);
+  try { localStorage.setItem(STARRED_LS, JSON.stringify(list)); } catch {}
+}
+
+/** Shared factory — creates a ★/☆ toggle button attached to `card`. */
+function makeStarButton(card, reply) {
+  const query = card.dataset.query || '';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'star-btn';
+  btn.title = 'Star this exchange';
+  const currentlyStarred = isStarred(query);
+  btn.textContent = currentlyStarred ? '★' : '☆';
+  if (currentlyStarred) { btn.classList.add('starred-on'); card.classList.add('starred'); }
+  btn.addEventListener('click', () => {
+    if (isStarred(query)) {
+      removeStarred(query);
+      btn.textContent = '☆';
+      btn.classList.remove('starred-on');
+      card.classList.remove('starred');
+    } else {
+      addStarred(query, reply);
+      btn.textContent = '★';
+      btn.classList.add('starred-on');
+      card.classList.add('starred');
+    }
+  });
+  return btn;
 }
 
 /* ---- pinned tiles (persisted across sessions) ---- */
@@ -744,6 +807,13 @@ document.getElementById('thread-clear').addEventListener('click', () => {
   render('');
 });
 
+document.getElementById('tt-fold').addEventListener('click', () =>
+  threadList.querySelectorAll('.exchange').forEach(c => c.classList.add('collapsed'))
+);
+document.getElementById('tt-open').addEventListener('click', () =>
+  threadList.querySelectorAll('.exchange').forEach(c => c.classList.remove('collapsed'))
+);
+
 function buildExportMarkdown() {
   const now = new Date().toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
   const lines = [`# JARVIS Conversation — ${now}\n`];
@@ -805,7 +875,10 @@ const SLASH_CMDS = [
   { icon:'⊛', name:'/models',  desc:'Local Ollama models',         submit:true },
   { icon:'☁', name:'/weather', desc:'Current weather',             submit:true },
   { icon:'🔍', name:'/todo',    desc:'/todo <keyword>  search tasks', submit:false },
-  { icon:'⟲',  name:'/recap',  desc:'Summarize this thread (Ollama)', submit:true },
+  { icon:'⟲',  name:'/recap',   desc:'Summarize this thread (Ollama)', submit:true },
+  { icon:'★',  name:'/starred', desc:'Browse starred exchanges',       submit:true },
+  { icon:'🔍', name:'/find',    desc:'/find <keyword>  search thread', submit:false },
+  { icon:'⊗',  name:'/clear',   desc:'Clear conversation thread',      submit:true },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -999,6 +1072,7 @@ function makeCard(query, modeLabel, skipLoading = false) {
   const card = document.createElement('div');
   card.className = skipLoading ? 'exchange' : 'exchange loading';
   card.dataset.n = n;
+  card.dataset.query = query.slice(0, 200);  // used by starring and /find
 
   const userRow = document.createElement('div');
   userRow.className = 'exchange-user';
@@ -1082,8 +1156,10 @@ function fillCard(card, data, elapsed) {
     t.textContent = elapsed + 's';
     foot.appendChild(t);
   }
-  // Copy reply button + followup button — always present when there's a reply
+  // Star button + followup button + copy button — always present when there's a reply
   if (data.reply) {
+    foot.appendChild(makeStarButton(card, data.reply));
+
     const followBtn = document.createElement('button');
     followBtn.type = 'button';
     followBtn.className = 'followup-btn';
@@ -1181,6 +1257,12 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
   else if (/^\/models\b/i.test(raw))  { await handleModelList(); }
   else if (/^\/weather\b/i.test(raw)) { await handleWeather(); }
   else if (/^\/recap\b/i.test(raw))   { await handleRecap(); }
+  else if (/^\/starred\b/i.test(raw)) { await handleStarred(); }
+  else if (/^\/find\b/i.test(raw)) {
+    const q = raw.replace(/^\/find\s*/i, '').trim();
+    await handleFind(q);
+  }
+  else if (/^\/clear\b/i.test(raw)) { document.getElementById('thread-clear').click(); }
   else if (/^task[: ]+/i.test(raw)) {
     let content = raw.match(/^task[: ]+(.*)/i)[1].trim();
     let dueString = 'today';
@@ -1865,9 +1947,10 @@ async function _streamOllama(card, query, model, history, modeLabel, opts = {}) 
   if (typeof rendered === 'string') body.textContent = rendered;
   else body.appendChild(rendered);
 
-  // Add followup + copy buttons to footer
+  // Add star + followup + copy buttons to footer
   if (fullReply) {
     const foot = document.getElementById(`ex-${n}-foot`);
+    foot.appendChild(makeStarButton(card, fullReply));
 
     const followBtn = document.createElement('button');
     followBtn.type = 'button';
@@ -1911,6 +1994,118 @@ async function _streamOllama(card, query, model, history, modeLabel, opts = {}) 
   saveExchanges();
   askBtn.disabled = false;
   filterInput.focus();
+}
+
+/* ---- /find — client-side thread keyword search ---- */
+let _findActive = false;
+async function handleFind(query) {
+  // Reset previous find state
+  threadList.querySelectorAll('.exchange').forEach(c =>
+    c.classList.remove('find-dim', 'find-match')
+  );
+  _findActive = false;
+  filterInput.value = '';
+
+  if (!query) return;  // bare /find resets and exits
+
+  const q = query.toLowerCase();
+  let matchCount = 0;
+  let firstMatch = null;
+
+  threadList.querySelectorAll('.exchange').forEach(card => {
+    const cardQuery = (card.dataset.query || '').toLowerCase();
+    const bodyEl = card.querySelector('.exchange-body');
+    const bodyText = bodyEl ? bodyEl.innerText.toLowerCase() : '';
+    if (cardQuery.includes(q) || bodyText.includes(q)) {
+      matchCount++;
+      card.classList.add('find-match');
+      card.classList.remove('collapsed');  // expand so the match is visible
+      if (!firstMatch) firstMatch = card;
+    } else {
+      card.classList.add('find-dim');
+    }
+  });
+
+  _findActive = true;
+  const resultCard = makeCard(`/find "${query}"`, '🔍 Find', true);
+  threadList.appendChild(resultCard);
+  thread.classList.add('visible');
+  const body = document.getElementById(`ex-${resultCard.dataset.n}-body`);
+  body.className = 'exchange-body';
+  if (!matchCount) {
+    body.textContent = `No exchanges match "${query}". Run /find (empty) or press Esc to reset.`;
+  } else {
+    body.textContent = `${matchCount} match${matchCount === 1 ? '' : 'es'} for "${query}". Non-matching cards are dimmed. Run /find (empty) or press Esc to reset.`;
+    if (firstMatch) firstMatch.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/* ---- /starred — browse saved exchanges ---- */
+async function handleStarred() {
+  const starred = getStarred();
+  const card = makeCard('/starred', '★ Starred', true);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+
+  const body = document.getElementById(`ex-${card.dataset.n}-body`);
+  body.className = 'exchange-body';
+  card.classList.remove('loading');
+
+  if (!starred.length) {
+    body.textContent = 'No starred exchanges yet — click ★ on any card footer to save it.';
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'task-list';
+
+  starred.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'task-item';
+    row.style.cssText = 'flex-direction:column;align-items:flex-start;gap:4px;padding:8px 0';
+
+    const top = document.createElement('div');
+    top.style.cssText = 'display:flex;width:100%;justify-content:space-between;align-items:flex-start;gap:8px';
+
+    const qEl = document.createElement('strong');
+    qEl.style.cssText = 'color:var(--amber);font-family:var(--mono);font-size:12px;flex:1';
+    qEl.textContent = item.query.length > 100 ? item.query.slice(0, 100) + '…' : item.query;
+
+    const rmBtn = document.createElement('button');
+    rmBtn.type = 'button';
+    rmBtn.className = 'task-done-btn';
+    rmBtn.title = 'Remove from starred';
+    rmBtn.textContent = '✕ unstar';
+    rmBtn.addEventListener('click', () => {
+      removeStarred(item.query);
+      row.style.transition = 'opacity .2s';
+      row.style.opacity = '0';
+      setTimeout(() => row.remove(), 220);
+      // Sync any visible card in the thread
+      threadList.querySelectorAll('.exchange').forEach(c => {
+        if ((c.dataset.query || '').slice(0, 150) === item.query) {
+          c.classList.remove('starred');
+          const sb = c.querySelector('.star-btn');
+          if (sb) { sb.textContent = '☆'; sb.classList.remove('starred-on'); }
+        }
+      });
+    });
+
+    top.append(qEl, rmBtn);
+
+    const rEl = document.createElement('span');
+    rEl.style.cssText = 'font-size:12px;color:var(--text-faint);font-family:var(--body)';
+    const rText = (item.reply || '');
+    rEl.textContent = rText.length > 120 ? rText.slice(0, 120) + '…' : (rText || '—');
+
+    row.append(top, rEl);
+    list.appendChild(row);
+  });
+
+  body.appendChild(list);
 }
 
 /* ---- /recap — Ollama-powered thread summary ---- */
