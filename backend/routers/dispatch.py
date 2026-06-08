@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..services import context, heyclaude
+from ..services import context, heyclaude, ollama
 
 router = APIRouter()
 
@@ -13,6 +15,7 @@ class DispatchRequest(BaseModel):
     mode: str = "default"
     use_context: bool = True
     history: list[dict] = []
+    provider: str = "auto"  # "heyclaude" | "ollama" | "auto"
 
 
 @router.get("/context")
@@ -32,17 +35,22 @@ async def dispatch(req: DispatchRequest) -> dict:
     # Gather task/timestamp context (respects use_context toggle)
     ctx = await context.gather() if req.use_context else ""
 
-    # History is always threaded in for conversational continuity — it's not
-    # the same as the "context" toggle (which gates Todoist tasks + timestamp).
+    # History is always threaded in for conversational continuity.
     hist_str = context.format_history(req.history)
 
-    # Combine into a single block; each non-empty part separated by a blank line
     parts = [p for p in [ctx, hist_str] if p]
     full_ctx = "\n\n".join(parts)
-
     augmented = context.augment(req.query, full_ctx)
-    result = await heyclaude.ask(augmented, mode=req.mode)
 
-    # Return only the gather context (not history) for the UI context block —
-    # the user can already see the history in the conversation thread.
+    # Route to the requested provider
+    if req.provider == "ollama":
+        result = await ollama.ask(augmented)
+    elif req.provider == "heyclaude":
+        result = await heyclaude.ask(augmented, mode=req.mode)
+    else:
+        # auto: try Hey Claude; fall back to Ollama when offline and configured
+        result = await heyclaude.ask(augmented, mode=req.mode)
+        if result.get("error") == "heyclaude_offline" and os.getenv("OLLAMA_URL"):
+            result = await ollama.ask(augmented)
+
     return {**result, "context": ctx}

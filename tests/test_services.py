@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from backend.services import context, github, heyclaude, todoist, weather
+from backend.services import context, github, heyclaude, ollama, todoist, weather
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +447,112 @@ class TestOpenPRsService:
         with _mock_get("github", return_value=_response(200, {"items": items})):
             result = asyncio.run(github.open_prs())
         assert result[0]["repo"] == "?"
+
+
+# ---------------------------------------------------------------------------
+# ollama
+# ---------------------------------------------------------------------------
+
+
+def _mock_ollama(method: str, return_value=None, side_effect=None):
+    """Patch ollama.AsyncClient so instantiation returns a mock with async methods."""
+    mock_instance = AsyncMock()
+    attr = getattr(mock_instance, method)
+    if side_effect is not None:
+        attr.side_effect = side_effect
+    else:
+        attr.return_value = return_value
+    return patch("backend.services.ollama.AsyncClient", return_value=mock_instance)
+
+
+def _fake_chat_response(content: str) -> MagicMock:
+    msg = MagicMock()
+    msg.content = content
+    resp = MagicMock()
+    resp.message = msg
+    return resp
+
+
+def _fake_list_response(models: list[tuple[str, int]]) -> MagicMock:
+    """models: list of (name, size_bytes)."""
+    resp = MagicMock()
+    resp.models = [
+        MagicMock(**{"model": name, "size": size}) for name, size in models
+    ]
+    return resp
+
+
+class TestOllamaService:
+    def test_ask_returns_reply(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+        monkeypatch.setenv("OLLAMA_MODEL", "llama3.2")
+        fake = _fake_chat_response("Hello from Ollama!")
+        with _mock_ollama("chat", return_value=fake):
+            result = asyncio.run(ollama.ask("hi"))
+        assert result["reply"] == "Hello from Ollama!"
+        assert result["events"] == []
+        assert result["model"] == "llama3.2"
+
+    def test_ask_uses_env_model(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_MODEL", "mistral")
+        fake = _fake_chat_response("Mistral reply")
+        with _mock_ollama("chat", return_value=fake) as mock_cls:
+            asyncio.run(ollama.ask("hello"))
+        instance = mock_cls.return_value
+        call_kwargs = instance.chat.call_args.kwargs
+        assert call_kwargs.get("model") == "mistral"
+
+    def test_ask_overrides_model(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_MODEL", "llama3.2")
+        fake = _fake_chat_response("Gemma reply")
+        with _mock_ollama("chat", return_value=fake) as mock_cls:
+            asyncio.run(ollama.ask("hi", model="gemma3"))
+        instance = mock_cls.return_value
+        assert instance.chat.call_args.kwargs.get("model") == "gemma3"
+
+    def test_ask_error_returns_error_dict(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+        with _mock_ollama("chat", side_effect=ConnectionRefusedError("refused")):
+            result = asyncio.run(ollama.ask("hi"))
+        assert result["error"] == "ollama_error"
+        assert "reply" in result
+
+    def test_check_ok_shows_model_count(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+        fake = _fake_list_response([("llama3.2:latest", 2_000_000_000), ("mistral:latest", 4_000_000_000)])
+        with _mock_ollama("list", return_value=fake):
+            result = asyncio.run(ollama.check())
+        assert result["state"] == "ok"
+        assert "2 local models" in result["detail"]
+
+    def test_check_singular_model(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+        fake = _fake_list_response([("llama3.2:latest", 2_000_000_000)])
+        with _mock_ollama("list", return_value=fake):
+            result = asyncio.run(ollama.check())
+        assert "1 local model" in result["detail"]
+        assert "1 local models" not in result["detail"]
+
+    def test_check_offline_returns_warn(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+        with _mock_ollama("list", side_effect=ConnectionRefusedError("refused")):
+            result = asyncio.run(ollama.check())
+        assert result["state"] == "warn"
+
+    def test_list_models_returns_names_and_sizes(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+        fake = _fake_list_response([("llama3.2:latest", 2_000_000_000)])
+        with _mock_ollama("list", return_value=fake):
+            result = asyncio.run(ollama.list_models())
+        assert len(result) == 1
+        assert result[0]["name"] == "llama3.2:latest"
+        assert result[0]["size_gb"] == 2.0
+
+    def test_list_models_error_returns_empty(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+        with _mock_ollama("list", side_effect=ConnectionRefusedError("refused")):
+            result = asyncio.run(ollama.list_models())
+        assert result == []
 
 
 # ---------------------------------------------------------------------------

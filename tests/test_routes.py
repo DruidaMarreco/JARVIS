@@ -274,6 +274,70 @@ class TestCloseTaskRoute:
 # ---------------------------------------------------------------------------
 
 
+class TestOllamaModelsRoute:
+    def test_returns_models_list(self):
+        models = [{"name": "llama3.2:latest", "size_gb": 2.0}]
+        with patch("backend.services.ollama.list_models", new_callable=AsyncMock, return_value=models):
+            r = client.get("/api/ollama/models")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] == 1
+        assert data["models"][0]["name"] == "llama3.2:latest"
+
+    def test_empty_when_offline(self):
+        with patch("backend.services.ollama.list_models", new_callable=AsyncMock, return_value=[]):
+            r = client.get("/api/ollama/models")
+        assert r.status_code == 200
+        assert r.json() == {"models": [], "count": 0}
+
+
+class TestDispatchOllamaProvider:
+    def test_ollama_provider_routes_to_ollama(self):
+        reply = {"reply": "Local reply", "events": [], "model": "llama3.2"}
+        with patch("backend.services.ollama.ask", new_callable=AsyncMock, return_value=reply) as mock_ollama:
+            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False, "provider": "ollama"})
+        assert r.status_code == 200
+        assert r.json()["reply"] == "Local reply"
+        mock_ollama.assert_called_once()
+
+    def test_heyclaude_provider_skips_ollama(self):
+        reply = {"reply": "HC reply", "events": []}
+        with (
+            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_hc,
+            patch("backend.services.ollama.ask", new_callable=AsyncMock) as mock_ollama,
+        ):
+            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False, "provider": "heyclaude"})
+        assert r.status_code == 200
+        mock_hc.assert_called_once()
+        mock_ollama.assert_not_called()
+
+    def test_auto_provider_falls_back_to_ollama_when_hc_offline(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+        hc_reply = {"reply": "offline", "error": "heyclaude_offline"}
+        ol_reply = {"reply": "Ollama fallback", "events": [], "model": "llama3.2"}
+        with (
+            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=hc_reply),
+            patch("backend.services.ollama.ask", new_callable=AsyncMock, return_value=ol_reply) as mock_ollama,
+            patch("backend.services.context.gather", new_callable=AsyncMock, return_value=""),
+        ):
+            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False, "provider": "auto"})
+        assert r.status_code == 200
+        mock_ollama.assert_called_once()
+        assert r.json()["reply"] == "Ollama fallback"
+
+    def test_auto_provider_does_not_fall_back_without_ollama_url(self, monkeypatch):
+        monkeypatch.delenv("OLLAMA_URL", raising=False)
+        hc_reply = {"reply": "offline", "error": "heyclaude_offline"}
+        with (
+            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=hc_reply),
+            patch("backend.services.ollama.ask", new_callable=AsyncMock) as mock_ollama,
+            patch("backend.services.context.gather", new_callable=AsyncMock, return_value=""),
+        ):
+            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False, "provider": "auto"})
+        assert r.status_code == 200
+        mock_ollama.assert_not_called()
+
+
 class TestPRsRoute:
     def test_returns_prs_list_and_count(self):
         prs = [
