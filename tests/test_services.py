@@ -12,10 +12,8 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 
 from backend.services import context, github, heyclaude, ollama, todoist, weather
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,7 +47,6 @@ def _mock_client(method: str, return_value=None, side_effect=None):
     mock_cm.__aenter__ = AsyncMock(return_value=mock_instance)
     mock_cm.__aexit__ = AsyncMock(return_value=False)
 
-    target = f"backend.services.{{}}.httpx.AsyncClient"
     # caller must supply the service name via a keyword
     raise RuntimeError("use _mock_get / _mock_post helpers instead")
 
@@ -107,9 +104,7 @@ class TestContextService:
     def test_gather_includes_github_activity(self, monkeypatch):
         monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
         monkeypatch.setenv("GITHUB_USERNAME", "testuser")
-        events = [
-            {"type": "PushEvent", "repo": {"name": "u/JARVIS"}, "payload": {"commits": [{}]}}
-        ]
+        events = [{"type": "PushEvent", "repo": {"name": "u/JARVIS"}, "payload": {"commits": [{}]}}]
         with _mock_get("github", return_value=_response(200, events)):
             result = asyncio.run(context.gather())
         assert "Recent GitHub" in result
@@ -418,10 +413,18 @@ class TestGithubRecentActivity:
         """recent_activity delegates to recent_events which shows all events."""
         monkeypatch.setenv("GITHUB_USERNAME", "testuser")
         events = [
-            {"type": "PushEvent", "repo": {"name": "u/repo"}, "payload": {"commits": [{}]},
-             "created_at": "2026-06-08T10:00:00Z"},
-            {"type": "PushEvent", "repo": {"name": "u/repo"}, "payload": {"commits": [{}]},
-             "created_at": "2026-06-08T11:00:00Z"},
+            {
+                "type": "PushEvent",
+                "repo": {"name": "u/repo"},
+                "payload": {"commits": [{}]},
+                "created_at": "2026-06-08T10:00:00Z",
+            },
+            {
+                "type": "PushEvent",
+                "repo": {"name": "u/repo"},
+                "payload": {"commits": [{}]},
+                "created_at": "2026-06-08T11:00:00Z",
+            },
         ]
         with _mock_get("github", return_value=_response(200, events)):
             result = asyncio.run(github.recent_activity(limit=3))
@@ -639,9 +642,7 @@ def _fake_chat_response(content: str) -> MagicMock:
 def _fake_list_response(models: list[tuple[str, int]]) -> MagicMock:
     """models: list of (name, size_bytes)."""
     resp = MagicMock()
-    resp.models = [
-        MagicMock(**{"model": name, "size": size}) for name, size in models
-    ]
+    resp.models = [MagicMock(**{"model": name, "size": size}) for name, size in models]
     return resp
 
 
@@ -682,7 +683,9 @@ class TestOllamaService:
 
     def test_check_ok_shows_model_count(self, monkeypatch):
         monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
-        fake = _fake_list_response([("llama3.2:latest", 2_000_000_000), ("mistral:latest", 4_000_000_000)])
+        fake = _fake_list_response(
+            [("llama3.2:latest", 2_000_000_000), ("mistral:latest", 4_000_000_000)]
+        )
         with _mock_ollama("list", return_value=fake):
             result = asyncio.run(ollama.check())
         assert result["state"] == "ok"
@@ -722,14 +725,17 @@ class TestOllamaService:
 
         async def fake_chat_stream(*args, **kwargs):
             for word in ["Hello", " world"]:
-                msg = MagicMock(); msg.content = word
-                chunk = MagicMock(); chunk.message = msg
+                msg = MagicMock()
+                msg.content = word
+                chunk = MagicMock()
+                chunk.message = msg
                 yield chunk
 
         with _mock_ollama("chat", return_value=fake_chat_stream()):
             chunks = asyncio.run(_collect_stream(ollama.stream("hi")))
 
         import json as _json
+
         events = [_json.loads(c[6:]) for c in chunks if c.startswith("data: ")]
         assert events[0].get("model") == "llama3.2"
         tokens = [e["token"] for e in events if "token" in e]
@@ -742,6 +748,7 @@ class TestOllamaService:
             chunks = asyncio.run(_collect_stream(ollama.stream("hi")))
 
         import json as _json
+
         events = [_json.loads(c[6:]) for c in chunks if c.startswith("data: ")]
         assert any("error" in e for e in events)
         assert events[-1].get("done") is True
@@ -778,6 +785,7 @@ class TestOllamaService:
     def test_build_messages_filters_invalid_roles(self):
         """_build_messages should only include user/assistant roles."""
         from backend.services.ollama import _build_messages
+
         history = [
             {"role": "system", "content": "Be helpful"},  # filtered out
             {"role": "user", "content": "Hello"},
@@ -792,6 +800,7 @@ class TestOllamaService:
     def test_build_messages_prepends_system_prompt(self):
         """When system_prompt is set it must be the first message."""
         from backend.services.ollama import _build_messages
+
         msgs = _build_messages("Hello", [], system_prompt="Be concise.")
         assert msgs[0] == {"role": "system", "content": "Be concise."}
         assert msgs[-1] == {"role": "user", "content": "Hello"}
@@ -799,6 +808,7 @@ class TestOllamaService:
     def test_build_messages_empty_system_prompt_not_added(self):
         """Empty or whitespace-only system_prompt must not add a system message."""
         from backend.services.ollama import _build_messages
+
         msgs = _build_messages("Hello", [], system_prompt="   ")
         assert all(m["role"] != "system" for m in msgs)
 

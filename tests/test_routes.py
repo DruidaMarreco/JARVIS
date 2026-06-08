@@ -7,9 +7,8 @@ responses.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
@@ -30,7 +29,9 @@ class TestStatusRoute:
             {"label": "GitHub", "state": "ok", "detail": "5 public repos"},
         ]
         with (
-            patch("backend.services.heyclaude.check", new_callable=AsyncMock, return_value=chips[0]),
+            patch(
+                "backend.services.heyclaude.check", new_callable=AsyncMock, return_value=chips[0]
+            ),
             patch("backend.services.todoist.check", new_callable=AsyncMock, return_value=chips[1]),
             patch("backend.services.github.check", new_callable=AsyncMock, return_value=chips[2]),
         ):
@@ -80,7 +81,9 @@ class TestModesRoute:
 class TestDispatchRoute:
     def test_forwards_query_to_heyclaude(self):
         reply = {"reply": "Hello from Claude", "events": []}
-        with patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask:
+        with patch(
+            "backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply
+        ) as mock_ask:
             r = client.post("/api/dispatch", json={"query": "Hello", "use_context": False})
         assert r.status_code == 200
         assert r.json()["reply"] == "Hello from Claude"
@@ -88,14 +91,21 @@ class TestDispatchRoute:
 
     def test_forwards_mode_to_heyclaude(self):
         reply = {"reply": "Deep analysis", "events": []}
-        with patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask:
-            r = client.post("/api/dispatch", json={"query": "Explain entropy", "mode": "researcher", "use_context": False})
+        with patch(
+            "backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply
+        ) as mock_ask:
+            r = client.post(
+                "/api/dispatch",
+                json={"query": "Explain entropy", "mode": "researcher", "use_context": False},
+            )
         assert r.status_code == 200
         mock_ask.assert_called_once_with("Explain entropy", mode="researcher")
 
     def test_default_mode_when_omitted(self):
         reply = {"reply": "ok", "events": []}
-        with patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask:
+        with patch(
+            "backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply
+        ) as mock_ask:
             r = client.post("/api/dispatch", json={"query": "hi"})
         assert r.status_code == 200
         _, kwargs = mock_ask.call_args
@@ -128,8 +138,12 @@ class TestDispatchRoute:
     def test_context_skipped_when_disabled(self):
         reply = {"reply": "Sure.", "events": []}
         with (
-            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask,
-            patch("backend.services.context.gather", new_callable=AsyncMock, return_value="ctx") as mock_ctx,
+            patch(
+                "backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply
+            ) as mock_ask,
+            patch(
+                "backend.services.context.gather", new_callable=AsyncMock, return_value="ctx"
+            ) as mock_ctx,
         ):
             r = client.post("/api/dispatch", json={"query": "hi", "use_context": False})
         assert r.status_code == 200
@@ -142,10 +156,12 @@ class TestDispatchRoute:
         reply = {"reply": "Done.", "events": []}
         ctx = "[Context · Saturday]\nTask A"
         with (
-            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask,
+            patch(
+                "backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply
+            ) as mock_ask,
             patch("backend.services.context.gather", new_callable=AsyncMock, return_value=ctx),
         ):
-            r = client.post("/api/dispatch", json={"query": "What now?", "use_context": True})
+            client.post("/api/dispatch", json={"query": "What now?", "use_context": True})
         sent_query = mock_ask.call_args.args[0]
         assert "[Context" in sent_query
         assert "What now?" in sent_query
@@ -157,10 +173,15 @@ class TestDispatchRoute:
             {"role": "assistant", "content": "Focus on Task A."},
         ]
         with (
-            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_ask,
+            patch(
+                "backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply
+            ) as mock_ask,
             patch("backend.services.context.gather", new_callable=AsyncMock, return_value=""),
         ):
-            r = client.post("/api/dispatch", json={"query": "What's next?", "use_context": False, "history": history})
+            r = client.post(
+                "/api/dispatch",
+                json={"query": "What's next?", "use_context": False, "history": history},
+            )
         assert r.status_code == 200
         sent_query = mock_ask.call_args.args[0]
         assert "[Prior conversation]" in sent_query
@@ -175,7 +196,7 @@ class TestDispatchRoute:
         assert r.status_code == 200
 
     def test_history_not_returned_in_context_field(self):
-        """History is threaded into the query but not echoed back in 'context' (visible in thread)."""
+        """History is threaded into the query but not echoed back in 'context' field."""
         reply = {"reply": "Sure.", "events": []}
         history = [{"role": "user", "content": "Earlier message"}]
         ctx = "[Context · Sun]\nTask A"
@@ -183,7 +204,9 @@ class TestDispatchRoute:
             patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply),
             patch("backend.services.context.gather", new_callable=AsyncMock, return_value=ctx),
         ):
-            r = client.post("/api/dispatch", json={"query": "hi", "use_context": True, "history": history})
+            r = client.post(
+                "/api/dispatch", json={"query": "hi", "use_context": True, "history": history}
+            )
         assert r.status_code == 200
         data = r.json()
         # context field should only contain the gather output, not the history block
@@ -199,7 +222,9 @@ class TestDispatchRoute:
 class TestTasksRoute:
     def test_creates_task_via_todoist_service(self):
         created = {"id": "42", "content": "Buy milk"}
-        with patch("backend.services.todoist.create_task", new_callable=AsyncMock, return_value=created) as mock:
+        with patch(
+            "backend.services.todoist.create_task", new_callable=AsyncMock, return_value=created
+        ) as mock:
             r = client.post("/api/tasks", json={"content": "Buy milk"})
         assert r.status_code == 200
         assert r.json()["content"] == "Buy milk"
@@ -207,8 +232,12 @@ class TestTasksRoute:
 
     def test_custom_due_string_forwarded(self):
         created = {"id": "1", "content": "Meeting prep"}
-        with patch("backend.services.todoist.create_task", new_callable=AsyncMock, return_value=created) as mock:
-            r = client.post("/api/tasks", json={"content": "Meeting prep", "due_string": "tomorrow"})
+        with patch(
+            "backend.services.todoist.create_task", new_callable=AsyncMock, return_value=created
+        ) as mock:
+            r = client.post(
+                "/api/tasks", json={"content": "Meeting prep", "due_string": "tomorrow"}
+            )
         assert r.status_code == 200
         mock.assert_called_once_with("Meeting prep", "tomorrow")
 
@@ -226,7 +255,9 @@ class TestTasksRoute:
 
     def test_error_from_service_propagates(self):
         err = {"error": "no_token", "detail": "TODOIST_API_TOKEN is not set"}
-        with patch("backend.services.todoist.create_task", new_callable=AsyncMock, return_value=err):
+        with patch(
+            "backend.services.todoist.create_task", new_callable=AsyncMock, return_value=err
+        ):
             r = client.post("/api/tasks", json={"content": "x"})
         assert r.status_code == 200
         assert r.json()["error"] == "no_token"
@@ -235,13 +266,21 @@ class TestTasksRoute:
 class TestListTasksRoute:
     def test_returns_tasks_with_count(self):
         raw = [
-            {"id": "1", "content": "Review PR", "priority": 2, "due": {"string": "today"}, "project_id": "p1"},
+            {
+                "id": "1",
+                "content": "Review PR",
+                "priority": 2,
+                "due": {"string": "today"},
+                "project_id": "p1",
+            },
             {"id": "2", "content": "Write tests", "priority": 1, "due": None, "project_id": "p2"},
         ]
         projects = {"p1": "Work", "p2": "Personal"}
         with (
             patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=raw),
-            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value=projects),
+            patch(
+                "backend.services.todoist.projects", new_callable=AsyncMock, return_value=projects
+            ),
         ):
             r = client.get("/api/tasks")
         assert r.status_code == 200
@@ -274,7 +313,9 @@ class TestListTasksRoute:
 
 class TestCloseTaskRoute:
     def test_close_task_returns_ok(self):
-        with patch("backend.services.todoist.close_task", new_callable=AsyncMock, return_value={"ok": True}) as mock:
+        with patch(
+            "backend.services.todoist.close_task", new_callable=AsyncMock, return_value={"ok": True}
+        ) as mock:
             r = client.post("/api/tasks/42/close")
         assert r.status_code == 200
         assert r.json()["ok"] is True
@@ -296,7 +337,9 @@ class TestCloseTaskRoute:
 class TestOllamaModelsRoute:
     def test_returns_models_list(self):
         models = [{"name": "llama3.2:latest", "size_gb": 2.0}]
-        with patch("backend.services.ollama.list_models", new_callable=AsyncMock, return_value=models):
+        with patch(
+            "backend.services.ollama.list_models", new_callable=AsyncMock, return_value=models
+        ):
             r = client.get("/api/ollama/models")
         assert r.status_code == 200
         data = r.json()
@@ -313,8 +356,12 @@ class TestOllamaModelsRoute:
 class TestDispatchOllamaProvider:
     def test_ollama_provider_routes_to_ollama(self):
         reply = {"reply": "Local reply", "events": [], "model": "llama3.2"}
-        with patch("backend.services.ollama.ask", new_callable=AsyncMock, return_value=reply) as mock_ollama:
-            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False, "provider": "ollama"})
+        with patch(
+            "backend.services.ollama.ask", new_callable=AsyncMock, return_value=reply
+        ) as mock_ollama:
+            r = client.post(
+                "/api/dispatch", json={"query": "hi", "use_context": False, "provider": "ollama"}
+            )
         assert r.status_code == 200
         assert r.json()["reply"] == "Local reply"
         mock_ollama.assert_called_once()
@@ -322,10 +369,14 @@ class TestDispatchOllamaProvider:
     def test_heyclaude_provider_skips_ollama(self):
         reply = {"reply": "HC reply", "events": []}
         with (
-            patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply) as mock_hc,
+            patch(
+                "backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=reply
+            ) as mock_hc,
             patch("backend.services.ollama.ask", new_callable=AsyncMock) as mock_ollama,
         ):
-            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False, "provider": "heyclaude"})
+            r = client.post(
+                "/api/dispatch", json={"query": "hi", "use_context": False, "provider": "heyclaude"}
+            )
         assert r.status_code == 200
         mock_hc.assert_called_once()
         mock_ollama.assert_not_called()
@@ -336,10 +387,14 @@ class TestDispatchOllamaProvider:
         ol_reply = {"reply": "Ollama fallback", "events": [], "model": "llama3.2"}
         with (
             patch("backend.services.heyclaude.ask", new_callable=AsyncMock, return_value=hc_reply),
-            patch("backend.services.ollama.ask", new_callable=AsyncMock, return_value=ol_reply) as mock_ollama,
+            patch(
+                "backend.services.ollama.ask", new_callable=AsyncMock, return_value=ol_reply
+            ) as mock_ollama,
             patch("backend.services.context.gather", new_callable=AsyncMock, return_value=""),
         ):
-            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False, "provider": "auto"})
+            r = client.post(
+                "/api/dispatch", json={"query": "hi", "use_context": False, "provider": "auto"}
+            )
         assert r.status_code == 200
         mock_ollama.assert_called_once()
         assert r.json()["reply"] == "Ollama fallback"
@@ -352,18 +407,26 @@ class TestDispatchOllamaProvider:
             patch("backend.services.ollama.ask", new_callable=AsyncMock) as mock_ollama,
             patch("backend.services.context.gather", new_callable=AsyncMock, return_value=""),
         ):
-            r = client.post("/api/dispatch", json={"query": "hi", "use_context": False, "provider": "auto"})
+            r = client.post(
+                "/api/dispatch", json={"query": "hi", "use_context": False, "provider": "auto"}
+            )
         assert r.status_code == 200
         mock_ollama.assert_not_called()
 
     def test_system_prompt_forwarded_to_ollama_ask(self):
         """system_prompt from the request body must reach ollama.ask()."""
         reply = {"reply": "ok", "events": [], "model": "llama3.2"}
-        with patch("backend.services.ollama.ask", new_callable=AsyncMock, return_value=reply) as mock_ollama:
+        with patch(
+            "backend.services.ollama.ask", new_callable=AsyncMock, return_value=reply
+        ) as mock_ollama:
             r = client.post(
                 "/api/dispatch",
-                json={"query": "hi", "use_context": False, "provider": "ollama",
-                      "system_prompt": "Be concise."},
+                json={
+                    "query": "hi",
+                    "use_context": False,
+                    "provider": "ollama",
+                    "system_prompt": "Be concise.",
+                },
             )
         assert r.status_code == 200
         _, kwargs = mock_ollama.call_args
@@ -372,7 +435,9 @@ class TestDispatchOllamaProvider:
     def test_system_prompt_empty_by_default(self):
         """Omitting system_prompt should default to empty string."""
         reply = {"reply": "ok", "events": [], "model": "llama3.2"}
-        with patch("backend.services.ollama.ask", new_callable=AsyncMock, return_value=reply) as mock_ollama:
+        with patch(
+            "backend.services.ollama.ask", new_callable=AsyncMock, return_value=reply
+        ) as mock_ollama:
             r = client.post(
                 "/api/dispatch",
                 json={"query": "hi", "use_context": False, "provider": "ollama"},
@@ -384,7 +449,9 @@ class TestDispatchOllamaProvider:
 
 class TestWeatherRoute:
     def test_returns_weather_string(self):
-        with patch("backend.services.weather.current", new_callable=AsyncMock, return_value="22°C, sunny"):
+        with patch(
+            "backend.services.weather.current", new_callable=AsyncMock, return_value="22°C, sunny"
+        ):
             r = client.get("/api/weather")
         assert r.status_code == 200
         assert r.json()["weather"] == "22°C, sunny"
@@ -424,7 +491,9 @@ class TestStreamRoute:
             patch("backend.services.ollama.stream", return_value=fake_stream("hi")),
             patch("backend.services.context.gather", new_callable=AsyncMock, return_value=""),
         ):
-            r = client.post("/api/stream", json={"query": "hi", "use_context": False, "provider": "ollama"})
+            r = client.post(
+                "/api/stream", json={"query": "hi", "use_context": False, "provider": "ollama"}
+            )
         assert r.status_code == 200
         assert "text/event-stream" in r.headers["content-type"]
         assert "token" in r.text
@@ -439,12 +508,13 @@ class TestStreamRoute:
             patch("backend.services.ollama.stream", return_value=fake_stream("hi")),
             patch("backend.services.context.gather", new_callable=AsyncMock, return_value=ctx),
         ):
-            r = client.post("/api/stream", json={"query": "hi", "use_context": True, "provider": "ollama"})
+            r = client.post(
+                "/api/stream", json={"query": "hi", "use_context": True, "provider": "ollama"}
+            )
         import json as _json
+
         events = [
-            _json.loads(line[6:])
-            for line in r.text.splitlines()
-            if line.startswith("data: ")
+            _json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")
         ]
         ctx_event = next((e for e in events if "context" in e), None)
         assert ctx_event is not None
@@ -454,7 +524,13 @@ class TestStreamRoute:
 class TestPRsRoute:
     def test_returns_prs_list_and_count(self):
         prs = [
-            {"number": 1, "title": "Add feature", "repo": "JARVIS", "url": "https://github.com/u/r/pull/1", "updated_at": "2026-06-07"},
+            {
+                "number": 1,
+                "title": "Add feature",
+                "repo": "JARVIS",
+                "url": "https://github.com/u/r/pull/1",
+                "updated_at": "2026-06-07",
+            },
         ]
         with patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=prs):
             r = client.get("/api/prs")
@@ -470,7 +546,15 @@ class TestPRsRoute:
         assert r.json() == {"prs": [], "count": 0}
 
     def test_pr_shape(self):
-        prs = [{"number": 7, "title": "Fix bug", "repo": "repo", "url": "https://x", "updated_at": "2026-01-01"}]
+        prs = [
+            {
+                "number": 7,
+                "title": "Fix bug",
+                "repo": "repo",
+                "url": "https://x",
+                "updated_at": "2026-01-01",
+            }
+        ]
         with patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=prs):
             r = client.get("/api/prs")
         item = r.json()["prs"][0]
@@ -479,11 +563,17 @@ class TestPRsRoute:
 
 class TestSearchTasksRoute:
     def test_returns_matching_tasks(self):
-        raw = [{"id": "1", "content": "Plan meeting", "priority": 2, "due": None, "project_id": "p1"}]
+        raw = [
+            {"id": "1", "content": "Plan meeting", "priority": 2, "due": None, "project_id": "p1"}
+        ]
         projects = {"p1": "Work"}
         with (
-            patch("backend.services.todoist.search", new_callable=AsyncMock, return_value=raw) as mock_search,
-            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value=projects),
+            patch(
+                "backend.services.todoist.search", new_callable=AsyncMock, return_value=raw
+            ) as mock_search,
+            patch(
+                "backend.services.todoist.projects", new_callable=AsyncMock, return_value=projects
+            ),
         ):
             r = client.get("/api/tasks/search?q=meeting")
         assert r.status_code == 200
@@ -511,10 +601,17 @@ class TestSearchTasksRoute:
 class TestEventsRoute:
     def test_returns_events_list_and_count(self):
         events = [
-            {"type": "push", "repo": "JARVIS", "summary": "Pushed 2 commits to main",
-             "url": "https://github.com/u/JARVIS", "date": "2026-06-08"},
+            {
+                "type": "push",
+                "repo": "JARVIS",
+                "summary": "Pushed 2 commits to main",
+                "url": "https://github.com/u/JARVIS",
+                "date": "2026-06-08",
+            },
         ]
-        with patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=events):
+        with patch(
+            "backend.services.github.recent_events", new_callable=AsyncMock, return_value=events
+        ):
             r = client.get("/api/events")
         assert r.status_code == 200
         data = r.json()
@@ -523,15 +620,26 @@ class TestEventsRoute:
         assert data["events"][0]["summary"] == "Pushed 2 commits to main"
 
     def test_empty_when_no_events(self):
-        with patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=[]):
+        with patch(
+            "backend.services.github.recent_events", new_callable=AsyncMock, return_value=[]
+        ):
             r = client.get("/api/events")
         assert r.status_code == 200
         assert r.json() == {"events": [], "count": 0}
 
     def test_event_shape_has_required_keys(self):
-        events = [{"type": "star", "repo": "repo", "summary": "Starred repo",
-                   "url": "https://github.com/u/r", "date": "2026-06-08"}]
-        with patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=events):
+        events = [
+            {
+                "type": "star",
+                "repo": "repo",
+                "summary": "Starred repo",
+                "url": "https://github.com/u/r",
+                "date": "2026-06-08",
+            }
+        ]
+        with patch(
+            "backend.services.github.recent_events", new_callable=AsyncMock, return_value=events
+        ):
             r = client.get("/api/events")
         item = r.json()["events"][0]
         assert {"type", "repo", "summary", "url", "date"} <= item.keys()

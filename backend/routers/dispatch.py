@@ -71,7 +71,9 @@ async def dispatch(req: DispatchRequest) -> dict:
 
     # Route to the requested provider
     if req.provider == "ollama":
-        result = await ollama.ask(augmented, model=_ollama_model(req), system_prompt=req.system_prompt)
+        result = await ollama.ask(
+            augmented, model=_ollama_model(req), system_prompt=req.system_prompt
+        )
     elif req.provider == "heyclaude":
         result = await heyclaude.ask(augmented, mode=req.mode)
     else:
