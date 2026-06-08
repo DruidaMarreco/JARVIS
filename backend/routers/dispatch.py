@@ -18,6 +18,7 @@ class DispatchRequest(BaseModel):
     use_context: bool = True
     history: list[dict] = []
     provider: str = "auto"  # "heyclaude" | "ollama" | "auto"
+    system_prompt: str = ""  # prepended as system role for Ollama requests
 
 
 def _ollama_model(req: DispatchRequest) -> str | None:
@@ -70,7 +71,7 @@ async def dispatch(req: DispatchRequest) -> dict:
 
     # Route to the requested provider
     if req.provider == "ollama":
-        result = await ollama.ask(augmented, model=_ollama_model(req))
+        result = await ollama.ask(augmented, model=_ollama_model(req), system_prompt=req.system_prompt)
     elif req.provider == "heyclaude":
         result = await heyclaude.ask(augmented, mode=req.mode)
     else:
@@ -93,7 +94,12 @@ async def stream_dispatch(req: DispatchRequest):
     async def generate():
         # Send the context block first so the UI can display it immediately
         yield f"data: {json.dumps({'context': ctx})}\n\n"
-        async for chunk in ollama.stream(augmented, model=_ollama_model(req), history=req.history):
+        async for chunk in ollama.stream(
+            augmented,
+            model=_ollama_model(req),
+            history=req.history,
+            system_prompt=req.system_prompt,
+        ):
             yield chunk
 
     return StreamingResponse(

@@ -356,6 +356,31 @@ class TestDispatchOllamaProvider:
         assert r.status_code == 200
         mock_ollama.assert_not_called()
 
+    def test_system_prompt_forwarded_to_ollama_ask(self):
+        """system_prompt from the request body must reach ollama.ask()."""
+        reply = {"reply": "ok", "events": [], "model": "llama3.2"}
+        with patch("backend.services.ollama.ask", new_callable=AsyncMock, return_value=reply) as mock_ollama:
+            r = client.post(
+                "/api/dispatch",
+                json={"query": "hi", "use_context": False, "provider": "ollama",
+                      "system_prompt": "Be concise."},
+            )
+        assert r.status_code == 200
+        _, kwargs = mock_ollama.call_args
+        assert kwargs.get("system_prompt") == "Be concise."
+
+    def test_system_prompt_empty_by_default(self):
+        """Omitting system_prompt should default to empty string."""
+        reply = {"reply": "ok", "events": [], "model": "llama3.2"}
+        with patch("backend.services.ollama.ask", new_callable=AsyncMock, return_value=reply) as mock_ollama:
+            r = client.post(
+                "/api/dispatch",
+                json={"query": "hi", "use_context": False, "provider": "ollama"},
+            )
+        assert r.status_code == 200
+        _, kwargs = mock_ollama.call_args
+        assert kwargs.get("system_prompt") == ""
+
 
 class TestWeatherRoute:
     def test_returns_weather_string(self):

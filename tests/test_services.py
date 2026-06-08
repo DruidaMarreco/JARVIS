@@ -789,6 +789,42 @@ class TestOllamaService:
         assert msgs[-1] == {"role": "user", "content": "Follow-up"}
         assert len(msgs) == 3  # system entry dropped
 
+    def test_build_messages_prepends_system_prompt(self):
+        """When system_prompt is set it must be the first message."""
+        from backend.services.ollama import _build_messages
+        msgs = _build_messages("Hello", [], system_prompt="Be concise.")
+        assert msgs[0] == {"role": "system", "content": "Be concise."}
+        assert msgs[-1] == {"role": "user", "content": "Hello"}
+
+    def test_build_messages_empty_system_prompt_not_added(self):
+        """Empty or whitespace-only system_prompt must not add a system message."""
+        from backend.services.ollama import _build_messages
+        msgs = _build_messages("Hello", [], system_prompt="   ")
+        assert all(m["role"] != "system" for m in msgs)
+
+    def test_stream_passes_system_prompt_to_build_messages(self, monkeypatch):
+        """system_prompt forwarded through stream() must appear in messages."""
+        monkeypatch.setenv("OLLAMA_MODEL", "llama3.2")
+        captured: list[dict] = []
+
+        async def fake_chat(**kwargs):
+            captured.append(kwargs)
+
+            async def _empty():
+                return
+                yield  # pragma: no cover
+
+            return _empty()
+
+        mock_instance = AsyncMock()
+        mock_instance.chat.side_effect = fake_chat
+        with patch("backend.services.ollama.AsyncClient", return_value=mock_instance):
+            asyncio.run(_collect_stream(ollama.stream("hi", system_prompt="Be brief.")))
+
+        assert captured
+        messages = captured[0]["messages"]
+        assert messages[0] == {"role": "system", "content": "Be brief."}
+
 
 # ---------------------------------------------------------------------------
 # heyclaude

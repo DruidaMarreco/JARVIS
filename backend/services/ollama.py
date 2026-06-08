@@ -60,13 +60,21 @@ async def list_models() -> list[dict]:
         return []
 
 
-def _build_messages(prompt: str, history: list[dict]) -> list[dict]:
+def _build_messages(
+    prompt: str,
+    history: list[dict],
+    system_prompt: str = "",
+) -> list[dict]:
     """Build a messages array for the Ollama chat API.
 
     ``history`` items are ``{role, content}`` dicts (same shape as OpenAI).
-    The current user prompt is appended last.
+    The current user prompt is appended last.  When ``system_prompt`` is
+    provided it is prepended as a ``system`` role message.
     """
     msgs: list[dict] = []
+    sp = system_prompt.strip()
+    if sp:
+        msgs.append({"role": "system", "content": sp})
     for h in history:
         role = h.get("role", "")
         content = h.get("content", "")
@@ -80,6 +88,7 @@ async def stream(
     prompt: str,
     model: str | None = None,
     history: list[dict] | None = None,
+    system_prompt: str = "",
 ) -> AsyncIterator[str]:
     """Async generator yielding SSE-formatted strings for streaming Ollama responses.
 
@@ -94,7 +103,7 @@ async def stream(
     """
     chosen = model or _default_model()
     yield f"data: {json.dumps({'model': chosen})}\n\n"
-    messages = _build_messages(prompt, history or [])
+    messages = _build_messages(prompt, history or [], system_prompt=system_prompt)
     try:
         client = AsyncClient(host=_host())
         async for chunk in await client.chat(
@@ -112,14 +121,18 @@ async def stream(
     yield f"data: {json.dumps({'done': True})}\n\n"
 
 
-async def ask(prompt: str, model: str | None = None) -> dict:
+async def ask(
+    prompt: str,
+    model: str | None = None,
+    system_prompt: str = "",
+) -> dict:
     """Send a prompt to a local Ollama model and return {reply, events, model}."""
     chosen = model or _default_model()
     try:
         client = AsyncClient(host=_host())
         response = await client.chat(
             model=chosen,
-            messages=[{"role": "user", "content": prompt}],
+            messages=_build_messages(prompt, [], system_prompt=system_prompt),
         )
         msg = getattr(response, "message", None)
         reply: str = getattr(msg, "content", str(response)) if msg is not None else str(response)

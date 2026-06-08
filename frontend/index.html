@@ -142,7 +142,14 @@ body::before{
 .exchange-body code{font-family:var(--mono);font-size:12px;background:var(--bg-soft);
   padding:1px 5px;border-radius:3px;color:var(--teal)}
 .exchange-body pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;
-  padding:12px 14px;overflow-x:auto;margin:0 0 12px}
+  padding:12px 14px;overflow-x:auto;margin:0 0 12px;position:relative}
+.code-copy-btn{position:absolute;top:7px;right:8px;font-family:var(--mono);font-size:9px;
+  cursor:pointer;border:1px solid var(--line);background:var(--bg-soft);color:var(--text-faint);
+  padding:1px 7px;border-radius:3px;transition:border-color .1s,color .1s;opacity:0;
+  transition:opacity .15s,border-color .1s,color .1s}
+.exchange-body pre:hover .code-copy-btn{opacity:1}
+.code-copy-btn:hover{border-color:var(--teal-dim);color:var(--teal)}
+.code-copy-btn.copied{border-color:var(--teal);color:var(--teal);opacity:1}
 .exchange-body pre code{background:none;padding:0;color:var(--text-dim);font-size:12px}
 .exchange-body blockquote{border-left:2px solid var(--amber-dim);margin:0 0 10px;
   padding:4px 12px;color:var(--text-faint)}
@@ -293,6 +300,7 @@ body::before{
 .settings-input:focus{border-color:var(--amber)}
 .settings-row{display:flex;gap:10px}
 .settings-hint{font-family:var(--mono);font-size:11px;color:var(--text-faint)}
+.settings-textarea{resize:vertical;min-height:64px;font-size:12px;line-height:1.5}
 .settings-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
 .settings-save{background:var(--amber);color:#0a0e14;border:none;border-radius:6px;
   font-family:var(--display);font-size:12px;letter-spacing:.06em;padding:8px 20px;
@@ -417,6 +425,12 @@ body::before{
         <input type="text" class="settings-input" id="set-model" placeholder="llama3.2" maxlength="80" list="ollama-model-list" autocomplete="off">
         <datalist id="ollama-model-list"></datalist>
         <span class="settings-hint">Used when Ollama provider is active. Leave blank to use server default.</span>
+      </div>
+
+      <div class="settings-group">
+        <label class="settings-label">Ollama system prompt</label>
+        <textarea class="settings-input settings-textarea" id="set-system-prompt" placeholder="Be concise and technical. Answer in plain text unless code is required." rows="3"></textarea>
+        <span class="settings-hint">Prepended to every Ollama conversation as a system role instruction. Leave blank for no system prompt.</span>
       </div>
 
       <div class="settings-actions">
@@ -605,9 +619,26 @@ async function loadStatus() {
       c.innerHTML = `<span class="dot ${s.state}"></span>${s.label}<span class="chip-detail">· ${s.detail}</span>`;
       el.appendChild(c);
     });
+    // Update tagline with live counts
+    updateTagline(chips);
   } catch {
     el.innerHTML = '<div class="chip"><span class="dot warn"></span>Status unavailable</div>';
   }
+}
+
+function updateTagline(chips) {
+  const tagline = document.getElementById('tagline');
+  if (!tagline) return;
+  const parts = [];
+  chips.forEach(s => {
+    if (s.state === 'ok' || s.state === 'warn') {
+      // Only show brief detail, not the label (keeps it compact)
+      if (s.detail && s.detail !== 'offline') parts.push(s.detail);
+    }
+  });
+  tagline.textContent = parts.length
+    ? parts.join(' · ')
+    : 'All systems nominal · select a module to engage';
 }
 loadStatus();
 
@@ -1058,6 +1089,32 @@ function renderMd(text) {
     const div = document.createElement('div');
     div.innerHTML = marked.parse(text);
     div.querySelectorAll('a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+
+    // Inject copy buttons into every fenced code block
+    div.querySelectorAll('pre').forEach(pre => {
+      const code = pre.querySelector('code');
+      if (!code) return;
+      pre.style.position = 'relative';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'code-copy-btn';
+      btn.textContent = 'copy';
+      btn.title = 'Copy code block';
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(code.innerText);
+          btn.textContent = '✓';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1800);
+        } catch {
+          btn.textContent = '✗';
+          setTimeout(() => { btn.textContent = 'copy'; }, 1500);
+        }
+      });
+      pre.appendChild(btn);
+    });
+
     return div;
   } catch {
     // Fall back to plain text if marked fails
@@ -1577,7 +1634,34 @@ async function handleTodoSearch(query) {
         due.className = 'task-due' + (isOverdue ? ' overdue' : '');
         if (t.due?.string) due.textContent = isOverdue ? `⚑ ${t.due.string}` : t.due.string;
 
-        item.append(pri, contentWrap, due);
+        const doneBtn = document.createElement('button');
+        doneBtn.type = 'button';
+        doneBtn.className = 'task-done-btn';
+        doneBtn.textContent = '✓';
+        doneBtn.title = 'Mark complete';
+        doneBtn.addEventListener('click', async () => {
+          item.classList.add('done');
+          doneBtn.disabled = true;
+          doneBtn.textContent = '✓ done';
+          try {
+            const res = await fetch(`/api/tasks/${t.id}/close`, { method: 'POST' });
+            const result = await res.json();
+            if (result.ok) {
+              loadStatus();
+            } else {
+              item.classList.remove('done');
+              doneBtn.disabled = false;
+              doneBtn.textContent = '✓';
+              doneBtn.title = result.detail || 'Failed to complete';
+            }
+          } catch {
+            item.classList.remove('done');
+            doneBtn.disabled = false;
+            doneBtn.textContent = '✓';
+          }
+        });
+
+        item.append(pri, contentWrap, due, doneBtn);
         list.appendChild(item);
       });
       body.appendChild(list);
@@ -1624,7 +1708,7 @@ async function handleDispatch(query) {
     const r = await fetch('/api/dispatch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, mode: activeMode, use_context: useContext, history, provider }),
+      body: JSON.stringify({ query, mode: activeMode, use_context: useContext, history, provider, system_prompt: loadSettings().systemPrompt || '' }),
     });
     const data = await r.json();
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
@@ -1664,7 +1748,7 @@ async function _streamOllama(card, query, model, history, modeLabel) {
     const r = await fetch('/api/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, mode: model, use_context: useContext, history, provider: 'ollama' }),
+      body: JSON.stringify({ query, mode: model, use_context: useContext, history, provider: 'ollama', system_prompt: loadSettings().systemPrompt || '' }),
     });
 
     const reader = r.body.getReader();
@@ -1878,10 +1962,11 @@ function saveSettings(patch) {
 function openSettings() {
   const s = loadSettings();
   // Pre-populate form
-  document.getElementById('set-name').value  = localStorage.getItem(NAME_LS) || userName;
-  document.getElementById('set-lat').value   = s.weatherLat || '';
-  document.getElementById('set-lon').value   = s.weatherLon || '';
-  document.getElementById('set-model').value = s.ollamaModel || (ollamaModel !== 'default' ? ollamaModel : '');
+  document.getElementById('set-name').value          = localStorage.getItem(NAME_LS) || userName;
+  document.getElementById('set-lat').value           = s.weatherLat || '';
+  document.getElementById('set-lon').value           = s.weatherLon || '';
+  document.getElementById('set-model').value         = s.ollamaModel || (ollamaModel !== 'default' ? ollamaModel : '');
+  document.getElementById('set-system-prompt').value = s.systemPrompt || '';
   settingsOverlay.classList.add('visible');
   document.getElementById('set-name').focus();
 
@@ -1903,10 +1988,11 @@ function closeSettings() {
 }
 
 function applySettingsSave() {
-  const name  = document.getElementById('set-name').value.trim();
-  const lat   = document.getElementById('set-lat').value.trim();
-  const lon   = document.getElementById('set-lon').value.trim();
-  const model = document.getElementById('set-model').value.trim();
+  const name         = document.getElementById('set-name').value.trim();
+  const lat          = document.getElementById('set-lat').value.trim();
+  const lon          = document.getElementById('set-lon').value.trim();
+  const model        = document.getElementById('set-model').value.trim();
+  const systemPrompt = document.getElementById('set-system-prompt').value.trim();
 
   // Display name
   if (name) {
@@ -1915,11 +2001,12 @@ function applySettingsSave() {
     tick(); // update greeting
   }
 
-  // Weather location — persist for later use in handleWeather()
+  // Weather location + Ollama system prompt — persist for later use
   saveSettings({
-    weatherLat: lat || null,
-    weatherLon: lon || null,
-    ollamaModel: model || null,
+    weatherLat:   lat || null,
+    weatherLon:   lon || null,
+    ollamaModel:  model || null,
+    systemPrompt: systemPrompt || null,
   });
 
   // Ollama model preference
