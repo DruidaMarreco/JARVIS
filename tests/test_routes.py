@@ -235,19 +235,38 @@ class TestTasksRoute:
 class TestListTasksRoute:
     def test_returns_tasks_with_count(self):
         raw = [
-            {"id": "1", "content": "Review PR", "priority": 2, "due": {"string": "today"}},
-            {"id": "2", "content": "Write tests", "priority": 1, "due": None},
+            {"id": "1", "content": "Review PR", "priority": 2, "due": {"string": "today"}, "project_id": "p1"},
+            {"id": "2", "content": "Write tests", "priority": 1, "due": None, "project_id": "p2"},
         ]
-        with patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=raw):
+        projects = {"p1": "Work", "p2": "Personal"}
+        with (
+            patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=raw),
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value=projects),
+        ):
             r = client.get("/api/tasks")
         assert r.status_code == 200
         data = r.json()
         assert data["count"] == 2
         assert data["tasks"][0]["content"] == "Review PR"
         assert data["tasks"][0]["priority"] == 2
+        assert data["tasks"][0]["project"] == "Work"
+        assert data["tasks"][1]["project"] == "Personal"
+
+    def test_project_name_empty_when_not_found(self):
+        raw = [{"id": "1", "content": "Task", "priority": 1, "due": None, "project_id": "unknown"}]
+        with (
+            patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=raw),
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value={}),
+        ):
+            r = client.get("/api/tasks")
+        assert r.status_code == 200
+        assert r.json()["tasks"][0]["project"] == ""
 
     def test_empty_list_when_no_tasks(self):
-        with patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=[]):
+        with (
+            patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value={}),
+        ):
             r = client.get("/api/tasks")
         assert r.status_code == 200
         assert r.json() == {"tasks": [], "count": 0}
@@ -431,6 +450,35 @@ class TestPRsRoute:
             r = client.get("/api/prs")
         item = r.json()["prs"][0]
         assert {"number", "title", "repo", "url", "updated_at"} <= item.keys()
+
+
+class TestEventsRoute:
+    def test_returns_events_list_and_count(self):
+        events = [
+            {"type": "push", "repo": "JARVIS", "summary": "Pushed 2 commits to main",
+             "url": "https://github.com/u/JARVIS", "date": "2026-06-08"},
+        ]
+        with patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=events):
+            r = client.get("/api/events")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] == 1
+        assert data["events"][0]["type"] == "push"
+        assert data["events"][0]["summary"] == "Pushed 2 commits to main"
+
+    def test_empty_when_no_events(self):
+        with patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=[]):
+            r = client.get("/api/events")
+        assert r.status_code == 200
+        assert r.json() == {"events": [], "count": 0}
+
+    def test_event_shape_has_required_keys(self):
+        events = [{"type": "star", "repo": "repo", "summary": "Starred repo",
+                   "url": "https://github.com/u/r", "date": "2026-06-08"}]
+        with patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=events):
+            r = client.get("/api/events")
+        item = r.json()["events"][0]
+        assert {"type", "repo", "summary", "url", "date"} <= item.keys()
 
 
 class TestContextRoute:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
 
@@ -27,8 +29,15 @@ class TaskRequest(BaseModel):
 
 @router.get("/tasks")
 async def list_tasks() -> dict:
-    """Return today's + overdue Todoist tasks formatted for the UI."""
-    task_list = await todoist.tasks()
+    """Return today's + overdue Todoist tasks formatted for the UI.
+
+    Fetches tasks and projects in parallel so project names can be
+    shown alongside each task without extra latency.
+    """
+    task_list, project_map = await asyncio.gather(
+        todoist.tasks(),
+        todoist.projects(),
+    )
     return {
         "tasks": [
             {
@@ -36,6 +45,7 @@ async def list_tasks() -> dict:
                 "content": t.get("content", "untitled"),
                 "priority": t.get("priority", 1),
                 "due": t.get("due"),
+                "project": project_map.get(t.get("project_id", ""), ""),
             }
             for t in task_list
         ],

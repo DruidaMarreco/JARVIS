@@ -79,6 +79,17 @@ async def recent_activity(limit: int = 3) -> list[str]:
     Uses the public events API — no token required. Returns an empty list on any
     failure so callers can include it unconditionally.
     """
+    events = await recent_events(limit=limit)
+    return [e["summary"] for e in events]
+
+
+async def recent_events(limit: int = 12) -> list[dict]:
+    """Return structured recent GitHub events for rich UI rendering.
+
+    Each item: {type, repo, summary, url, date}.
+    Types: "push" | "pr_opened" | "pr_closed" | "pr_merged" | "star" | "fork"
+    Returns an empty list on any failure.
+    """
     username = _username()
     if not username:
         return []
@@ -87,30 +98,67 @@ async def recent_activity(limit: int = 3) -> list[str]:
             r = await client.get(
                 f"{_API}/users/{username}/events/public",
                 headers=_HEADERS,
+                params={"per_page": 50},
             )
             r.raise_for_status()
-            items: list[str] = []
-            seen_repos: set[str] = set()
+            items: list[dict] = []
             for ev in r.json():
                 ev_type = ev.get("type", "")
-                repo = ev.get("repo", {}).get("name", "").split("/", 1)[-1]
+                full_repo = ev.get("repo", {}).get("name", "")
+                repo = full_repo.split("/", 1)[-1] if full_repo else "?"
+                repo_url = f"https://github.com/{full_repo}" if full_repo else ""
                 payload = ev.get("payload", {})
+                date = (ev.get("created_at") or "")[:10]
 
-                if ev_type == "PushEvent" and repo not in seen_repos:
+                if ev_type == "PushEvent":
                     n = len(payload.get("commits", []))
                     noun = "commit" if n == 1 else "commits"
-                    items.append(f"{n} {noun} → {repo}")
-                    seen_repos.add(repo)
+                    branch = (payload.get("ref") or "").replace("refs/heads/", "")
+                    items.append({
+                        "type": "push",
+                        "repo": repo,
+                        "summary": f"Pushed {n} {noun} to {branch or repo}",
+                        "url": repo_url,
+                        "date": date,
+                    })
 
                 elif ev_type == "PullRequestEvent":
                     action = payload.get("action", "")
-                    title = payload.get("pull_request", {}).get("title", "")
+                    pr = payload.get("pull_request", {})
+                    title = pr.get("title", "")
+                    url = pr.get("html_url", repo_url)
                     if action in ("opened", "closed", "merged") and title:
-                        short = title[:40] + ("…" if len(title) > 40 else "")
-                        items.append(f"PR {action}: {short}")
+                        short = title[:50] + ("…" if len(title) > 50 else "")
+                        kind = "pr_merged" if pr.get("merged") else f"pr_{action}"
+                        items.append({
+                            "type": kind,
+                            "repo": repo,
+                            "summary": f"PR {action}: {short}",
+                            "url": url,
+                            "date": date,
+                        })
+
+                elif ev_type == "WatchEvent":
+                    items.append({
+                        "type": "star",
+                        "repo": repo,
+                        "summary": f"Starred {repo}",
+                        "url": repo_url,
+                        "date": date,
+                    })
+
+                elif ev_type == "ForkEvent":
+                    items.append({
+                        "type": "fork",
+                        "repo": repo,
+                        "summary": f"Forked {repo}",
+                        "url": repo_url,
+                        "date": date,
+                    })
 
                 if len(items) >= limit:
                     break
             return items
     except Exception:
+        _log.debug("github.recent_events() failed", exc_info=True)
         return []

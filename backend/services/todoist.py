@@ -33,9 +33,32 @@ async def tasks() -> list[dict]:
         return []
 
 
+async def projects() -> dict[str, str]:
+    """Return a mapping of project_id → project_name.
+
+    Used to annotate task lists with human-readable project names.
+    Returns an empty dict on any failure so callers can always call it safely.
+    """
+    token = _token()
+    if not token:
+        return {}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(
+                f"{_BASE}/projects",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            r.raise_for_status()
+            return {p["id"]: p.get("name", "?") for p in r.json()}
+    except Exception:
+        _log.debug("todoist.projects() failed", exc_info=True)
+        return {}
+
+
 async def create_task(content: str, due_string: str = "today") -> dict:
     """Create a task in Todoist.
 
+    Pass ``due_string=""`` to create an inbox task with no due date.
     Returns the created task dict on success, or a dict with an ``error`` key
     on failure so callers never have to handle exceptions.
     """
@@ -44,13 +67,16 @@ async def create_task(content: str, due_string: str = "today") -> dict:
         return {"error": "no_token", "detail": "TODOIST_API_TOKEN is not set"}
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
+            payload: dict = {"content": content}
+            if due_string:  # omit entirely for inbox tasks (no due date)
+                payload["due_string"] = due_string
             r = await client.post(
                 f"{_BASE}/tasks",
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                 },
-                json={"content": content, "due_string": due_string},
+                json=payload,
             )
             r.raise_for_status()
             return r.json()
