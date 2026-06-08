@@ -60,13 +60,15 @@ async def open_prs(limit: int = 10) -> list[dict]:
             for item in items[:limit]:
                 repo_url = item.get("repository_url", "")
                 repo = repo_url.rsplit("/", 1)[-1] if repo_url else "?"
-                result.append({
-                    "number": item.get("number"),
-                    "title": item.get("title", ""),
-                    "repo": repo,
-                    "url": item.get("html_url", ""),
-                    "updated_at": (item.get("updated_at") or "")[:10],
-                })
+                result.append(
+                    {
+                        "number": item.get("number"),
+                        "title": item.get("title", ""),
+                        "repo": repo,
+                        "url": item.get("html_url", ""),
+                        "updated_at": (item.get("updated_at") or "")[:10],
+                    }
+                )
             return result
     except Exception as exc:
         _log.warning("github.open_prs() failed: %s", exc)
@@ -114,13 +116,15 @@ async def recent_events(limit: int = 12) -> list[dict]:
                     n = len(payload.get("commits", []))
                     noun = "commit" if n == 1 else "commits"
                     branch = (payload.get("ref") or "").replace("refs/heads/", "")
-                    items.append({
-                        "type": "push",
-                        "repo": repo,
-                        "summary": f"Pushed {n} {noun} to {branch or repo}",
-                        "url": repo_url,
-                        "date": date,
-                    })
+                    items.append(
+                        {
+                            "type": "push",
+                            "repo": repo,
+                            "summary": f"Pushed {n} {noun} to {branch or repo}",
+                            "url": repo_url,
+                            "date": date,
+                        }
+                    )
 
                 elif ev_type == "PullRequestEvent":
                     action = payload.get("action", "")
@@ -130,31 +134,37 @@ async def recent_events(limit: int = 12) -> list[dict]:
                     if action in ("opened", "closed", "merged") and title:
                         short = title[:50] + ("…" if len(title) > 50 else "")
                         kind = "pr_merged" if pr.get("merged") else f"pr_{action}"
-                        items.append({
-                            "type": kind,
-                            "repo": repo,
-                            "summary": f"PR {action}: {short}",
-                            "url": url,
-                            "date": date,
-                        })
+                        items.append(
+                            {
+                                "type": kind,
+                                "repo": repo,
+                                "summary": f"PR {action}: {short}",
+                                "url": url,
+                                "date": date,
+                            }
+                        )
 
                 elif ev_type == "WatchEvent":
-                    items.append({
-                        "type": "star",
-                        "repo": repo,
-                        "summary": f"Starred {repo}",
-                        "url": repo_url,
-                        "date": date,
-                    })
+                    items.append(
+                        {
+                            "type": "star",
+                            "repo": repo,
+                            "summary": f"Starred {repo}",
+                            "url": repo_url,
+                            "date": date,
+                        }
+                    )
 
                 elif ev_type == "ForkEvent":
-                    items.append({
-                        "type": "fork",
-                        "repo": repo,
-                        "summary": f"Forked {repo}",
-                        "url": repo_url,
-                        "date": date,
-                    })
+                    items.append(
+                        {
+                            "type": "fork",
+                            "repo": repo,
+                            "summary": f"Forked {repo}",
+                            "url": repo_url,
+                            "date": date,
+                        }
+                    )
 
                 if len(items) >= limit:
                     break

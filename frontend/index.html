@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
 <style>
 :root{
   --bg:#0a0e14; --bg-soft:#10151e; --panel:#131a24; --panel-hi:#18212e;
@@ -117,7 +119,8 @@ body::before{
   overflow:hidden;margin-bottom:10px;animation:rise .25s ease forwards}
 .exchange-user{font-family:var(--mono);font-size:12px;padding:10px 16px;
   background:var(--panel-hi);border-bottom:1px solid var(--line);
-  display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  cursor:pointer;user-select:none}
 .exchange-query{color:var(--text-dim);flex:1;word-break:break-word}
 .exchange-meta{color:var(--text-faint);font-size:10px;letter-spacing:.04em;
   white-space:nowrap;display:flex;align-items:center;gap:6px;flex-shrink:0}
@@ -151,6 +154,7 @@ body::before{
 .code-copy-btn:hover{border-color:var(--teal-dim);color:var(--teal)}
 .code-copy-btn.copied{border-color:var(--teal);color:var(--teal);opacity:1}
 .exchange-body pre code{background:none;padding:0;color:var(--text-dim);font-size:12px}
+.exchange-body pre code.hljs{background:none;padding:0;font-size:12px}
 .exchange-body blockquote{border-left:2px solid var(--amber-dim);margin:0 0 10px;
   padding:4px 12px;color:var(--text-faint)}
 .exchange-body strong{color:var(--text);font-weight:500}
@@ -179,6 +183,17 @@ body::before{
 .exchange-foot{font-family:var(--mono);font-size:10px;color:var(--text-faint);padding:8px 16px;
   border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 .exchange-foot:empty{display:none}
+/* --- collapse / followup --- */
+.exchange-collapse-icon{font-size:9px;color:var(--text-faint);flex-shrink:0;
+  padding-top:2px;transition:transform .2s;line-height:1}
+.exchange.collapsed .exchange-collapse-icon{transform:rotate(-90deg)}
+.exchange.collapsed .exchange-ctx-block,
+.exchange.collapsed .exchange-body,
+.exchange.collapsed .exchange-foot{display:none !important}
+.followup-btn{font-family:var(--mono);font-size:9px;letter-spacing:.04em;cursor:pointer;
+  border:1px solid var(--line);background:none;color:var(--text-faint);padding:1px 7px;
+  border-radius:3px;transition:border-color .1s,color .1s}
+.followup-btn:hover{border-color:var(--amber-dim);color:var(--amber)}
 .reply-action-item{display:flex;align-items:center;gap:6px}
 .copy-reply-btn{font-family:var(--mono);font-size:9px;letter-spacing:.04em;cursor:pointer;
   border:1px solid var(--line);background:none;color:var(--text-faint);padding:1px 7px;
@@ -326,7 +341,7 @@ body::before{
       <div class="brand-mark" aria-hidden="true"></div>
       <div>
         <div class="brand-name">JARVIS</div>
-        <div class="brand-sub">Central Interface · v0.2</div>
+        <div class="brand-sub">Central Interface · v0.3</div>
       </div>
     </div>
     <div class="clockbox">
@@ -396,6 +411,7 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/todo …</span><span class="kbd-desc">Search all Todoist tasks</span></div>
       <div class="kbd-row"><span class="kbd-key">/models</span><span class="kbd-desc">Local Ollama models</span></div>
       <div class="kbd-row"><span class="kbd-key">/weather</span><span class="kbd-desc">Current weather</span></div>
+      <div class="kbd-row"><span class="kbd-key">/recap</span><span class="kbd-desc">Summarize thread with Ollama</span></div>
       <div class="kbd-row"><span class="kbd-key">note: …</span><span class="kbd-desc">Add to Todoist inbox (no date)</span></div>
     </div>
   </div>
@@ -789,6 +805,7 @@ const SLASH_CMDS = [
   { icon:'⊛', name:'/models',  desc:'Local Ollama models',         submit:true },
   { icon:'☁', name:'/weather', desc:'Current weather',             submit:true },
   { icon:'🔍', name:'/todo',    desc:'/todo <keyword>  search tasks', submit:false },
+  { icon:'⟲',  name:'/recap',  desc:'Summarize this thread (Ollama)', submit:true },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -995,7 +1012,15 @@ function makeCard(query, modeLabel, skipLoading = false) {
   meta.id = `ex-${n}-meta`;
   meta.textContent = modeLabel + (useContext ? ' · ⊕' : '');
 
-  userRow.append(qSpan, meta);
+  const collapseIcon = document.createElement('span');
+  collapseIcon.className = 'exchange-collapse-icon';
+  collapseIcon.textContent = '▾';
+
+  userRow.append(qSpan, meta, collapseIcon);
+  userRow.addEventListener('click', e => {
+    if (e.target.closest('button')) return;  // let ctx-btn clicks pass through
+    card.classList.toggle('collapsed');
+  });
 
   const ctxBlock = document.createElement('div');
   ctxBlock.className = 'exchange-ctx-block';
@@ -1057,8 +1082,19 @@ function fillCard(card, data, elapsed) {
     t.textContent = elapsed + 's';
     foot.appendChild(t);
   }
-  // Copy reply button — always present
+  // Copy reply button + followup button — always present when there's a reply
   if (data.reply) {
+    const followBtn = document.createElement('button');
+    followBtn.type = 'button';
+    followBtn.className = 'followup-btn';
+    followBtn.textContent = '↩ reply';
+    followBtn.title = 'Continue conversation from here';
+    followBtn.addEventListener('click', () => {
+      filterInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      filterInput.focus();
+    });
+    foot.appendChild(followBtn);
+
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'copy-reply-btn';
@@ -1113,6 +1149,11 @@ function renderMd(text) {
         }
       });
       pre.appendChild(btn);
+
+      // Syntax highlighting — must run after btn is injected so hljs sees the final DOM
+      if (code && typeof hljs !== 'undefined') {
+        try { hljs.highlightElement(code); } catch {}
+      }
     });
 
     return div;
@@ -1139,6 +1180,7 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
   }
   else if (/^\/models\b/i.test(raw))  { await handleModelList(); }
   else if (/^\/weather\b/i.test(raw)) { await handleWeather(); }
+  else if (/^\/recap\b/i.test(raw))   { await handleRecap(); }
   else if (/^task[: ]+/i.test(raw)) {
     let content = raw.match(/^task[: ]+(.*)/i)[1].trim();
     let dueString = 'today';
@@ -1726,7 +1768,15 @@ async function handleDispatch(query) {
   }
 }
 
-async function _streamOllama(card, query, model, history, modeLabel) {
+async function _streamOllama(card, query, model, history, modeLabel, opts = {}) {
+  // opts: { systemPrompt, useCtx, displayQuery }
+  // systemPrompt overrides the settings panel value (used by /recap)
+  // useCtx overrides the global useContext toggle
+  // displayQuery is what gets stored in exchanges[] (defaults to query)
+  const _systemPrompt  = opts.systemPrompt  !== undefined ? opts.systemPrompt  : (loadSettings().systemPrompt || '');
+  const _useCtx        = opts.useCtx        !== undefined ? opts.useCtx        : useContext;
+  const _displayQuery  = opts.displayQuery  !== undefined ? opts.displayQuery  : query;
+
   const n = card.dataset.n;
   const body = document.getElementById(`ex-${n}-body`);
   const metaEl = document.getElementById(`ex-${n}-meta`);
@@ -1748,7 +1798,7 @@ async function _streamOllama(card, query, model, history, modeLabel) {
     const r = await fetch('/api/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, mode: model, use_context: useContext, history, provider: 'ollama', system_prompt: loadSettings().systemPrompt || '' }),
+      body: JSON.stringify({ query, mode: model, use_context: _useCtx, history, provider: 'ollama', system_prompt: _systemPrompt }),
     });
 
     const reader = r.body.getReader();
@@ -1815,9 +1865,21 @@ async function _streamOllama(card, query, model, history, modeLabel) {
   if (typeof rendered === 'string') body.textContent = rendered;
   else body.appendChild(rendered);
 
-  // Add copy button to footer
+  // Add followup + copy buttons to footer
   if (fullReply) {
     const foot = document.getElementById(`ex-${n}-foot`);
+
+    const followBtn = document.createElement('button');
+    followBtn.type = 'button';
+    followBtn.className = 'followup-btn';
+    followBtn.textContent = '↩ reply';
+    followBtn.title = 'Continue conversation from here';
+    followBtn.addEventListener('click', () => {
+      filterInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      filterInput.focus();
+    });
+    foot.appendChild(followBtn);
+
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'copy-reply-btn';
@@ -1845,10 +1907,49 @@ async function _streamOllama(card, query, model, history, modeLabel) {
   elapsedEl.textContent = `${elapsed}s`;
   metaEl.appendChild(elapsedEl);
 
-  exchanges.push({ query, reply: fullReply, context: fullCtx, mode: modeLabel });
+  exchanges.push({ query: _displayQuery, reply: fullReply, context: fullCtx, mode: modeLabel });
   saveExchanges();
   askBtn.disabled = false;
   filterInput.focus();
+}
+
+/* ---- /recap — Ollama-powered thread summary ---- */
+async function handleRecap() {
+  const recent = exchanges.slice(-10);
+  const displayLabel = recent.length
+    ? `/recap — last ${recent.length} exchange${recent.length === 1 ? '' : 's'}`
+    : '/recap';
+  const card = makeCard(displayLabel, '⟲ Recap', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+
+  if (!recent.length) {
+    const body = document.getElementById(`ex-${card.dataset.n}-body`);
+    body.className = 'exchange-body';
+    body.textContent = 'No exchanges to recap yet — start a conversation first.';
+    card.classList.remove('loading');
+    return;
+  }
+
+  const transcript = recent.map((ex, i) =>
+    `Q${i + 1}: ${ex.query}\nA${i + 1}: ${ex.reply || '(no reply)'}`
+  ).join('\n\n');
+
+  const systemPrompt = 'Summarize the conversation in 3–5 concise bullet points. Cover key topics discussed, any decisions reached, and action items. Be direct and precise. Do not add preamble or outro.';
+  const settings = loadSettings();
+  const ollamaModel = settings.ollamaModel || 'default';
+
+  askBtn.disabled = true;
+  await _streamOllama(
+    card,
+    transcript,
+    ollamaModel !== 'default' ? ollamaModel : null,
+    [],   // no history — transcript IS the context
+    '⟲ Recap',
+    { systemPrompt, useCtx: false, displayQuery: displayLabel },
+  );
 }
 
 /* ---- keyboard help overlay ---- */
