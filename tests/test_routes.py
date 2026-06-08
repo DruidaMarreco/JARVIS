@@ -351,6 +351,23 @@ class TestWeatherRoute:
         assert r.status_code == 200
         assert r.json() == {"weather": ""}
 
+    def test_passes_lat_lon_query_params(self):
+        """lat/lon query params are forwarded to weather.current()."""
+        mock = AsyncMock(return_value="15°C, rain")
+        with patch("backend.services.weather.current", mock):
+            r = client.get("/api/weather?lat=51.5&lon=-0.12")
+        assert r.status_code == 200
+        assert r.json()["weather"] == "15°C, rain"
+        mock.assert_awaited_once_with(lat="51.5", lon="-0.12")
+
+    def test_omits_lat_lon_when_not_provided(self):
+        """Without query params, weather.current() receives None for lat/lon."""
+        mock = AsyncMock(return_value="10°C, cloudy")
+        with patch("backend.services.weather.current", mock):
+            r = client.get("/api/weather")
+        assert r.status_code == 200
+        mock.assert_awaited_once_with(lat=None, lon=None)
+
 
 class TestStreamRoute:
     def test_stream_returns_event_stream(self):

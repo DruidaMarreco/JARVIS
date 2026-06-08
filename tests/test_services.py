@@ -188,6 +188,22 @@ class TestWeatherService:
             result = asyncio.run(weather.current())
         assert result == ""
 
+    def test_custom_lat_lon_overrides_env(self, monkeypatch):
+        """Passing lat/lon args should take priority over env vars."""
+        monkeypatch.setenv("WEATHER_LAT", "38.71")
+        monkeypatch.setenv("WEATHER_LON", "-9.14")
+        payload = {"current": {"temperature_2m": 10.0, "weathercode": 0, "windspeed_10m": 0.0}}
+        captured: list[str] = []
+
+        async def _get(url, params=None, **kw):  # noqa: ARG001
+            if params:
+                captured.append(f"{params.get('latitude')},{params.get('longitude')}")
+            return _response(200, payload)
+
+        with _mock_get("weather", side_effect=_get):
+            asyncio.run(weather.current(lat="51.5", lon="-0.12"))
+        assert captured and captured[0] == "51.5,-0.12"
+
 
 class TestTodoistService:
     def test_tasks_no_token_returns_empty(self, monkeypatch):

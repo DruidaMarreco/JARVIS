@@ -265,9 +265,43 @@ body::before{
 .foot a{color:var(--text-dim);text-decoration:none;border-bottom:1px dotted var(--line-hi)}
 .foot a:hover{color:var(--amber)}
 
+/* ---- settings button ---- */
+.settings-btn{background:none;border:1px solid var(--line-hi);color:var(--text-faint);
+  font-size:15px;padding:5px 9px;border-radius:6px;cursor:pointer;line-height:1;
+  transition:color .15s,border-color .15s}
+.settings-btn:hover{color:var(--amber);border-color:var(--amber)}
+
+/* ---- settings overlay ---- */
+.settings-overlay{position:fixed;inset:0;background:rgba(10,14,20,.88);z-index:100;
+  display:none;align-items:center;justify-content:center}
+.settings-overlay.visible{display:flex}
+.settings-box{background:var(--panel);border:1px solid var(--line-hi);border-radius:12px;
+  padding:28px 32px;width:min(480px,92vw);display:flex;flex-direction:column;gap:20px}
+.settings-title{font-family:var(--display);font-size:14px;letter-spacing:.12em;
+  color:var(--amber);text-transform:uppercase;margin-bottom:4px}
+.settings-group{display:flex;flex-direction:column;gap:6px}
+.settings-label{font-family:var(--mono);font-size:11px;color:var(--text-faint);
+  text-transform:uppercase;letter-spacing:.08em}
+.settings-input{background:rgba(255,255,255,.04);border:1px solid var(--line-hi);
+  border-radius:6px;color:var(--text);font-family:var(--mono);font-size:13px;
+  padding:8px 11px;outline:none;transition:border-color .15s}
+.settings-input:focus{border-color:var(--amber)}
+.settings-row{display:flex;gap:10px}
+.settings-hint{font-family:var(--mono);font-size:11px;color:var(--text-faint)}
+.settings-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
+.settings-save{background:var(--amber);color:#0a0e14;border:none;border-radius:6px;
+  font-family:var(--display);font-size:12px;letter-spacing:.06em;padding:8px 20px;
+  cursor:pointer;transition:opacity .15s}
+.settings-save:hover{opacity:.85}
+.settings-cancel{background:none;border:1px solid var(--line-hi);color:var(--text-faint);
+  border-radius:6px;font-family:var(--mono);font-size:12px;padding:8px 14px;cursor:pointer;
+  transition:color .15s,border-color .15s}
+.settings-cancel:hover{color:var(--text);border-color:var(--text)}
+
 @media(max-width:640px){
   .topbar{flex-direction:column;align-items:flex-start;gap:14px}
   .clockbox{text-align:left}
+  .settings-btn{align-self:flex-end}
 }
 </style>
 </head>
@@ -286,6 +320,7 @@ body::before{
       <div class="clock" id="clock">--:--:--</div>
       <div class="datestr" id="date">———</div>
     </div>
+    <button type="button" class="settings-btn" id="settings-btn" title="Settings (,)">⚙</button>
   </header>
 
   <section class="greet">
@@ -333,6 +368,8 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/</span><span class="kbd-desc">Focus command bar</span></div>
       <div class="kbd-row"><span class="kbd-key">Esc</span><span class="kbd-desc">Clear conversation thread</span></div>
       <div class="kbd-row"><span class="kbd-key">c</span><span class="kbd-desc">Toggle context injection</span></div>
+      <div class="kbd-row"><span class="kbd-key">o</span><span class="kbd-desc">Toggle Ollama provider</span></div>
+      <div class="kbd-row"><span class="kbd-key">,</span><span class="kbd-desc">Open settings panel</span></div>
       <div class="kbd-row"><span class="kbd-key">1 – 6</span><span class="kbd-desc">Select mode by position</span></div>
       <div class="kbd-row"><span class="kbd-key">?</span><span class="kbd-desc">Show / hide this panel</span></div>
       <div class="kbd-row" style="margin-top:12px;border-top:1px solid var(--line-hi);padding-top:12px">
@@ -343,6 +380,39 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/prs</span><span class="kbd-desc">Open pull requests</span></div>
       <div class="kbd-row"><span class="kbd-key">/models</span><span class="kbd-desc">Local Ollama models</span></div>
       <div class="kbd-row"><span class="kbd-key">/weather</span><span class="kbd-desc">Current weather</span></div>
+    </div>
+  </div>
+
+  <!-- settings overlay -->
+  <div class="settings-overlay" id="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="settings-box">
+      <div class="settings-title">Settings</div>
+
+      <div class="settings-group">
+        <label class="settings-label">Display name</label>
+        <input type="text" class="settings-input" id="set-name" placeholder="Simão" maxlength="40">
+        <span class="settings-hint">Shown in the greeting header</span>
+      </div>
+
+      <div class="settings-group">
+        <label class="settings-label">Weather location</label>
+        <div class="settings-row">
+          <input type="text" class="settings-input" id="set-lat" placeholder="38.71" maxlength="12" style="width:50%">
+          <input type="text" class="settings-input" id="set-lon" placeholder="-9.14" maxlength="12" style="width:50%">
+        </div>
+        <span class="settings-hint">Latitude &amp; longitude — find yours at maps.google.com</span>
+      </div>
+
+      <div class="settings-group">
+        <label class="settings-label">Default Ollama model</label>
+        <input type="text" class="settings-input" id="set-model" placeholder="llama3.2" maxlength="80">
+        <span class="settings-hint">Used when Ollama provider is active. Leave blank to use server default.</span>
+      </div>
+
+      <div class="settings-actions">
+        <button type="button" class="settings-save" id="settings-save">Save</button>
+        <button type="button" class="settings-cancel" id="settings-cancel">Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -1191,12 +1261,17 @@ async function handleWeather() {
   render('');
 
   try {
-    const r = await fetch('/api/weather');
+    const ws = loadSettings();
+    const params = new URLSearchParams();
+    if (ws.weatherLat) params.set('lat', ws.weatherLat);
+    if (ws.weatherLon) params.set('lon', ws.weatherLon);
+    const qs = params.toString() ? `?${params}` : '';
+    const r = await fetch(`/api/weather${qs}`);
     const data = await r.json();
     card.classList.remove('loading');
     body.className = 'exchange-body';
     body.style.fontSize = '20px';
-    body.textContent = data.weather || 'Weather unavailable — check WEATHER_LAT/WEATHER_LON in .env';
+    body.textContent = data.weather || 'Weather unavailable — check WEATHER_LAT/WEATHER_LON in .env or settings';
   } catch (err) {
     card.classList.remove('loading');
     body.className = 'exchange-body error';
@@ -1496,8 +1571,9 @@ document.addEventListener('keydown', e => {
   const active = document.activeElement;
   const typing = active.tagName === 'INPUT' || active.tagName === 'TEXTAREA';
 
-  // Esc — close help overlay first, then clear thread
+  // Esc — close settings first, then help overlay, then clear thread
   if (e.key === 'Escape') {
+    if (settingsOverlay.classList.contains('visible')) { closeSettings(); return; }
     if (kbdHelp.classList.contains('visible')) { toggleHelp(false); return; }
     if (thread.classList.contains('visible')) {
       exchanges = [];
@@ -1519,6 +1595,12 @@ document.addEventListener('keydown', e => {
 
   // c — toggle context
   if (e.key === 'c') { ctxToggle.click(); return; }
+
+  // o — toggle Ollama provider
+  if (e.key === 'o') { ollamaToggle.click(); return; }
+
+  // , — open settings
+  if (e.key === ',') { openSettings(); return; }
 
   // 1-6 — select mode by position
   const idx = parseInt(e.key, 10) - 1;
@@ -1571,8 +1653,77 @@ function editUserName() {
   });
 }
 
+/* ---- settings panel ---- */
+const SETTINGS_KEY    = 'jarvis_settings';
+const settingsOverlay = document.getElementById('settings-overlay');
+const settingsBtn     = document.getElementById('settings-btn');
+const settingsSave    = document.getElementById('settings-save');
+const settingsCancel  = document.getElementById('settings-cancel');
+
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { return {}; }
+}
+function saveSettings(patch) {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...loadSettings(), ...patch })); } catch {}
+}
+
+function openSettings() {
+  const s = loadSettings();
+  // Pre-populate form
+  document.getElementById('set-name').value  = localStorage.getItem(NAME_LS) || userName;
+  document.getElementById('set-lat').value   = s.weatherLat || '';
+  document.getElementById('set-lon').value   = s.weatherLon || '';
+  document.getElementById('set-model').value = s.ollamaModel || ollamaModel !== 'default' ? (s.ollamaModel || ollamaModel) : '';
+  settingsOverlay.classList.add('visible');
+  document.getElementById('set-name').focus();
+}
+
+function closeSettings() {
+  settingsOverlay.classList.remove('visible');
+}
+
+function applySettingsSave() {
+  const name  = document.getElementById('set-name').value.trim();
+  const lat   = document.getElementById('set-lat').value.trim();
+  const lon   = document.getElementById('set-lon').value.trim();
+  const model = document.getElementById('set-model').value.trim();
+
+  // Display name
+  if (name) {
+    userName = name;
+    try { localStorage.setItem(NAME_LS, name); } catch {}
+    tick(); // update greeting
+  }
+
+  // Weather location — persist for later use in handleWeather()
+  saveSettings({
+    weatherLat: lat || null,
+    weatherLon: lon || null,
+    ollamaModel: model || null,
+  });
+
+  // Ollama model preference
+  if (model) {
+    ollamaModel = model;
+    savePrefs({ ollamaModel: model });
+  }
+
+  closeSettings();
+}
+
+settingsBtn.addEventListener('click', openSettings);
+settingsSave.addEventListener('click', applySettingsSave);
+settingsCancel.addEventListener('click', closeSettings);
+// Click backdrop to close
+settingsOverlay.addEventListener('click', e => { if (e.target === settingsOverlay) closeSettings(); });
+
 /* ---- auto-refresh status every 60 s ---- */
 setInterval(loadStatus, 60_000);
+
+/* ---- refresh status when tab becomes visible again ---- */
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) loadStatus();
+});
 
 /* ---- restore conversation from previous session ---- */
 (function restoreExchanges() {

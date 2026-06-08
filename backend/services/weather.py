@@ -31,10 +31,14 @@ _WMO: dict[int, str] = {
 }
 
 
-async def current() -> str:
-    """Return a compact current-conditions string or '' on failure."""
-    lat = os.getenv("WEATHER_LAT", "38.71")
-    lon = os.getenv("WEATHER_LON", "-9.14")
+async def current(lat: str | None = None, lon: str | None = None) -> str:
+    """Return a compact current-conditions string or '' on failure.
+
+    ``lat`` and ``lon`` override the env-var defaults, allowing per-request
+    location (e.g. from the frontend settings panel).
+    """
+    lat = lat or os.getenv("WEATHER_LAT", "38.71")
+    lon = lon or os.getenv("WEATHER_LON", "-9.14")
     try:
         async with httpx.AsyncClient(timeout=4.0) as client:
             r = await client.get(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -38,9 +38,16 @@ async def get_context() -> dict:
 
 
 @router.get("/weather")
-async def get_weather() -> dict:
-    """Return the current weather string from open-meteo."""
-    w = await weather.current()
+async def get_weather(
+    lat: str | None = Query(default=None, description="Latitude override (e.g. 38.71)"),
+    lon: str | None = Query(default=None, description="Longitude override (e.g. -9.14)"),
+) -> dict:
+    """Return the current weather string from open-meteo.
+
+    Optional ``lat``/``lon`` query params let the frontend pass a user-configured
+    location instead of the server-side env-var defaults.
+    """
+    w = await weather.current(lat=lat, lon=lon)
     return {"weather": w}
 
 
