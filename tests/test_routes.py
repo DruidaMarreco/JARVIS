@@ -7,6 +7,7 @@ responses.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -845,3 +846,114 @@ class TestFrontend:
         assert r.status_code == 200
         assert "text/html" in r.headers["content-type"]
         assert "JARVIS" in r.text
+
+
+# ---------------------------------------------------------------------------
+# GET /api/today
+# ---------------------------------------------------------------------------
+
+
+class TestTodayRoute:
+    def _patches(self, tasks=None, projects=None, weather="", prs=None, events=None):
+        return (
+            patch(
+                "backend.services.todoist.tasks", new_callable=AsyncMock, return_value=tasks or []
+            ),
+            patch(
+                "backend.services.todoist.projects",
+                new_callable=AsyncMock,
+                return_value=projects or {},
+            ),
+            patch("backend.services.weather.current", new_callable=AsyncMock, return_value=weather),
+            patch(
+                "backend.services.github.open_prs", new_callable=AsyncMock, return_value=prs or []
+            ),
+            patch(
+                "backend.services.github.recent_events",
+                new_callable=AsyncMock,
+                return_value=events or [],
+            ),
+        )
+
+    def test_returns_expected_shape(self):
+        with (
+            patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value={}),
+            patch("backend.services.weather.current", new_callable=AsyncMock, return_value=""),
+            patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=[]),
+        ):
+            r = client.get("/api/today")
+        assert r.status_code == 200
+        data = r.json()
+        expected = {"tasks", "task_count", "overdue_count", "weather", "prs", "pr_count", "events"}
+        assert expected <= data.keys()
+
+    def test_weather_in_response(self):
+        with (
+            patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value={}),
+            patch(
+                "backend.services.weather.current",
+                new_callable=AsyncMock,
+                return_value="22°C, clear sky",
+            ),
+            patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=[]),
+        ):
+            r = client.get("/api/today")
+        assert r.json()["weather"] == "22°C, clear sky"
+
+    def test_overdue_count(self):
+        today = date.today().isoformat()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        tasks = [
+            {"id": "1", "content": "A", "priority": 4, "due": {"date": today}, "project_id": ""},
+            {
+                "id": "2",
+                "content": "B",
+                "priority": 4,
+                "due": {"date": yesterday},
+                "project_id": "",
+            },  # noqa: E501
+        ]
+        with (
+            patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=tasks),
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value={}),
+            patch("backend.services.weather.current", new_callable=AsyncMock, return_value=""),
+            patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=[]),
+        ):
+            r = client.get("/api/today")
+        data = r.json()
+        assert data["task_count"] == 2
+        assert data["overdue_count"] == 1
+
+    def test_lat_lon_forwarded_to_weather(self):
+        with (
+            patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value={}),
+            patch(
+                "backend.services.weather.current", new_callable=AsyncMock, return_value=""
+            ) as wm,
+            patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=[]),
+        ):
+            client.get("/api/today?lat=38.71&lon=-9.14")
+        wm.assert_called_once_with(lat="38.71", lon="-9.14")
+
+    def test_empty_tasks_and_prs(self):
+        with (
+            patch("backend.services.todoist.tasks", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.todoist.projects", new_callable=AsyncMock, return_value={}),
+            patch("backend.services.weather.current", new_callable=AsyncMock, return_value=""),
+            patch("backend.services.github.open_prs", new_callable=AsyncMock, return_value=[]),
+            patch("backend.services.github.recent_events", new_callable=AsyncMock, return_value=[]),
+        ):
+            r = client.get("/api/today")
+        data = r.json()
+        assert data["task_count"] == 0
+        assert data["pr_count"] == 0
+        assert data["overdue_count"] == 0
+        assert data["tasks"] == []
+        assert data["prs"] == []
