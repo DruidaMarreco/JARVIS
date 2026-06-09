@@ -385,7 +385,7 @@ body::before{
       <div class="brand-mark" aria-hidden="true"></div>
       <div>
         <div class="brand-name">JARVIS</div>
-        <div class="brand-sub">Central Interface · v0.4</div>
+        <div class="brand-sub">Central Interface · v0.5</div>
       </div>
     </div>
     <div id="focus-timer" hidden class="focus-timer">
@@ -484,6 +484,9 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">[ ]</span><span class="kbd-desc">Navigate between thread cards</span></div>
       <div class="kbd-row"><span class="kbd-key">f</span><span class="kbd-desc">Quick 25-min focus session</span></div>
       <div class="kbd-row"><span class="kbd-key">note: …</span><span class="kbd-desc">Add to Todoist inbox (no date)</span></div>
+      <div class="kbd-row"><span class="kbd-key">/standup</span><span class="kbd-desc">AI-generated daily standup</span></div>
+      <div class="kbd-row"><span class="kbd-key">/ping</span><span class="kbd-desc">Service health &amp; latency check</span></div>
+      <div class="kbd-row"><span class="kbd-key">/remind N msg</span><span class="kbd-desc">Browser notification reminder</span></div>
     </div>
   </div>
 
@@ -1040,6 +1043,9 @@ const SLASH_CMDS = [
   { icon:'✓',  name:'/done',    desc:'/done <keyword>  complete a task',  submit:false },
   { icon:'↺',  name:'/history', desc:'Browse past queries',              submit:true },
   { icon:'↗',  name:'/open',    desc:'/open <name>  open bookmark or app', submit:false },
+  { icon:'⊛',  name:'/standup', desc:'AI-generated daily standup',         submit:true  },
+  { icon:'◉',  name:'/ping',    desc:'Service health & latency check',      submit:true  },
+  { icon:'⏰', name:'/remind',  desc:'/remind <mins> <message>',            submit:false },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -1458,6 +1464,12 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
     else { filterInput.value = '/issues '; filterInput.focus(); }
   }
   else if (/^\/scratch\b/i.test(raw)) { await handleScratch(); }
+  else if (/^\/standup\b/i.test(raw)) { await handleStandup(); }
+  else if (/^\/ping\b/i.test(raw))    { await handlePing(); }
+  else if (/^\/remind\b/i.test(raw)) {
+    const arg = raw.replace(/^\/remind\s*/i, '').trim();
+    await handleRemind(arg);
+  }
   else if (/^\/focus\b/i.test(raw)) {
     const arg = raw.replace(/^\/focus\s*/i, '').trim();
     await handleFocus(arg);
@@ -2706,6 +2718,215 @@ async function handleRecap() {
     '⟲ Recap',
     { systemPrompt, useCtx: false, displayQuery: displayLabel },
   );
+}
+
+/* ---- /standup — AI-generated daily standup ---- */
+async function handleStandup() {
+  const card = makeCard('/standup', '⊛ Standup', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.textContent = 'Gathering data…';
+  filterInput.value = '';
+  askBtn.disabled = true;
+  render('');
+
+  try {
+    const [tasksRes, prsRes, eventsRes] = await Promise.allSettled([
+      fetch('/api/tasks').then(r => r.json()),
+      fetch('/api/prs').then(r => r.json()),
+      fetch('/api/events').then(r => r.json()),
+    ]);
+
+    const tasks  = tasksRes.status  === 'fulfilled' ? (tasksRes.value.tasks   || []) : [];
+    const prs    = prsRes.status    === 'fulfilled' ? (prsRes.value.prs       || []) : [];
+    const events = eventsRes.status === 'fulfilled' ? (eventsRes.value.events || []) : [];
+
+    const todayStr  = new Date().toISOString().slice(0, 10);
+    const taskLines = tasks.length
+      ? tasks.map(t => `- ${t.content}${t.project && t.project !== 'Inbox' ? ` [${t.project}]` : ''}`).join('\n')
+      : '- No tasks today';
+    const prLines = prs.length
+      ? prs.slice(0, 5).map(p => `- PR #${p.number}: ${p.title} (${p.repo})`).join('\n')
+      : '- No open PRs';
+    const eventLines = events.length
+      ? events.slice(0, 5).map(e => `- ${e.summary} (${e.date})`).join('\n')
+      : '- No recent activity';
+
+    const standupPrompt =
+      `Generate my daily standup update in this exact format (use markdown bold headers):\n` +
+      `**Yesterday:** 2-3 concise bullets of what was done\n` +
+      `**Today:** 2-3 concise bullets of what is planned\n` +
+      `**Blockers:** 1 line or "None"\n\n` +
+      `Use this data:\n\n` +
+      `TODAY'S TASKS:\n${taskLines}\n\n` +
+      `OPEN PULL REQUESTS:\n${prLines}\n\n` +
+      `RECENT GITHUB ACTIVITY:\n${eventLines}\n\n` +
+      `Date: ${todayStr}`;
+
+    body.textContent = 'Generating standup…';
+
+    if (provider === 'ollama') {
+      await _streamOllama(card, standupPrompt, ollamaModel, [], '⊛ Standup', {
+        systemPrompt: 'You write concise professional daily standup updates. Use only the data provided. Be specific and brief.',
+        useCtx: false,
+        displayQuery: '/standup',
+      });
+    } else {
+      const t0 = Date.now();
+      const r = await fetch('/api/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: standupPrompt, mode: activeMode,
+          use_context: false, history: [], provider: 'heyclaude', system_prompt: '',
+        }),
+      });
+      const data = await r.json();
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      card.classList.remove('loading');
+      fillCard(card, data, elapsed);
+      exchanges.push({ query: '/standup', reply: data.reply || '', context: '', mode: '⊛ Standup' });
+      saveExchanges();
+    }
+  } catch (err) {
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    body.textContent = `Standup failed: ${err.message}`;
+  } finally {
+    askBtn.disabled = false;
+    filterInput.focus();
+  }
+}
+
+/* ---- /ping — service health & latency check ---- */
+async function handlePing() {
+  const card = makeCard('/ping', '◉ Ping', true);
+  card.classList.remove('loading');
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+  render('');
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.className = 'exchange-body';
+
+  const SERVICES = [
+    { name: 'JARVIS API', url: '/api/status' },
+    { name: 'Ollama',     url: '/api/ollama/models' },
+    { name: 'GitHub',     url: '/api/github/repos?limit=1' },
+    { name: 'Todoist',    url: '/api/tasks' },
+  ];
+
+  const container = document.createElement('div');
+  container.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+  body.appendChild(container);
+
+  // Pre-render all rows as pending so they appear immediately
+  const rows = SERVICES.map(svc => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px';
+    const dot = document.createElement('span');
+    dot.style.cssText = 'width:8px;height:8px;border-radius:50%;background:var(--text-faint);flex-shrink:0';
+    const label = document.createElement('span');
+    label.style.cssText = 'color:var(--text-dim);min-width:110px';
+    label.textContent = svc.name;
+    const latency = document.createElement('span');
+    latency.style.cssText = 'color:var(--text-faint)';
+    latency.textContent = '…';
+    row.append(dot, label, latency);
+    container.appendChild(row);
+    return { dot, latency };
+  });
+
+  // Ping all concurrently, update each row as it resolves
+  await Promise.allSettled(SERVICES.map(async (svc, i) => {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(svc.url);
+      const ms = Date.now() - t0;
+      if (r.ok) {
+        const color = ms < 200 ? 'var(--teal)' : ms < 800 ? 'var(--amber)' : '#e05f5f';
+        rows[i].dot.style.background = color;
+        if (ms < 200) rows[i].dot.style.boxShadow = '0 0 8px var(--teal-dim)';
+        rows[i].latency.textContent = `${ms} ms`;
+        rows[i].latency.style.color = color;
+      } else {
+        rows[i].dot.style.background = '#e05f5f';
+        rows[i].latency.textContent = `HTTP ${r.status}`;
+        rows[i].latency.style.color = '#e05f5f';
+      }
+    } catch {
+      rows[i].dot.style.background = '#e05f5f';
+      rows[i].latency.textContent = 'unreachable';
+      rows[i].latency.style.color = '#e05f5f';
+    }
+  }));
+}
+
+/* ---- /remind — scheduled browser-notification reminder ---- */
+async function handleRemind(arg) {
+  const match = arg.match(/^(\d+)\s+(.+)$/s);
+  if (!match) {
+    const card = makeCard('/remind', '⏰ Remind', true);
+    card.classList.remove('loading');
+    threadList.appendChild(card);
+    thread.classList.add('visible');
+    const body = document.getElementById(`ex-${card.dataset.n}-body`);
+    body.className = 'exchange-body';
+    body.innerHTML =
+      '<span style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">' +
+      'Usage: <code>/remind &lt;minutes&gt; &lt;message&gt;</code> — e.g. <code>/remind 15 Check the oven</code>' +
+      '</span>';
+    filterInput.value = '/remind ';
+    filterInput.focus();
+    return;
+  }
+
+  const mins = parseInt(match[1], 10);
+  const message = match[2].trim();
+
+  filterInput.value = '';
+  render('');
+
+  const card = makeCard(`/remind ${mins}m`, '⏰ Remind', true);
+  card.classList.remove('loading');
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.className = 'exchange-body';
+
+  const fireAt = new Date(Date.now() + mins * 60 * 1000);
+  const timeStr = fireAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  body.textContent = `⏰ Reminder set for ${timeStr}: "${message}"`;
+
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
+  setTimeout(() => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('JARVIS', { body: message });
+    }
+    // Show a new thread card when the reminder fires
+    const fired = makeCard(`⏰ ${message}`, '⏰ Remind', true);
+    fired.classList.remove('loading');
+    threadList.appendChild(fired);
+    thread.classList.add('visible');
+    const firedBody = document.getElementById(`ex-${fired.dataset.n}-body`);
+    firedBody.className = 'exchange-body';
+    firedBody.textContent = `Reminder: "${message}"`;
+    fired.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // Update original confirm card
+    body.textContent = `✓ Fired at ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}: "${message}"`;
+    body.style.color = 'var(--teal)';
+  }, mins * 60 * 1000);
 }
 
 /* ---- keyboard help overlay ---- */
