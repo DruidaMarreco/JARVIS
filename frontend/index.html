@@ -385,7 +385,7 @@ body::before{
       <div class="brand-mark" aria-hidden="true"></div>
       <div>
         <div class="brand-name">JARVIS</div>
-        <div class="brand-sub">Central Interface · v0.5</div>
+        <div class="brand-sub">Central Interface · v0.7</div>
       </div>
     </div>
     <div id="focus-timer" hidden class="focus-timer">
@@ -491,6 +491,8 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/sessions</span><span class="kbd-desc">Completed focus session history</span></div>
       <div class="kbd-row"><span class="kbd-key">/today</span><span class="kbd-desc">Today's snapshot: tasks, PRs, weather</span></div>
       <div class="kbd-row"><span class="kbd-key">/countdown [add|rm]</span><span class="kbd-desc">Countdown board — track future dates</span></div>
+      <div class="kbd-row"><span class="kbd-key">/habits [add|rm|done]</span><span class="kbd-desc">Daily habit tracker with streaks</span></div>
+      <div class="kbd-row"><span class="kbd-key">/log [text]</span><span class="kbd-desc">Timestamped daily journal — /log to view</span></div>
       <div class="kbd-row" style="margin-top:12px;border-top:1px solid var(--line-hi);padding-top:12px">
         <span class="kbd-key">s</span><span class="kbd-desc">Fill /standup in command bar</span></div>
       <div class="kbd-row"><span class="kbd-key">b</span><span class="kbd-desc">Run /brief immediately</span></div>
@@ -926,6 +928,51 @@ function render(filter = '') {
     }
   }
 
+  // Habits board — only when not filtering
+  if (!q) {
+    const habits = loadHabits();
+    if (habits.length) {
+      const today = _todayStr();
+      const hSec = document.createElement('section');
+      hSec.className = 'group';
+      hSec.innerHTML = `<div class="group-head"><span class="group-title">Habits</span>
+        <span class="group-line"></span><span class="group-count">${habits.length}</span></div>`;
+      const hGrid = document.createElement('div');
+      hGrid.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;padding:2px 0';
+      habits.forEach(h => {
+        const done = (h.dates || []).includes(today);
+        const streak = _habitStreak(h.dates || []);
+        const tile = document.createElement('div');
+        tile.style.cssText =
+          'font-family:var(--mono);font-size:12px;border:1px solid var(--line-hi);' +
+          `background:${done ? 'rgba(79,200,192,.08)' : 'var(--panel)'};border-radius:6px;` +
+          `padding:8px 14px;cursor:pointer;display:flex;flex-direction:column;gap:3px;min-width:90px;` +
+          `border-color:${done ? 'var(--teal-dim)' : 'var(--line-hi)'}`;
+        tile.title = done ? 'Click to unmark' : 'Click to mark done';
+        const nameEl = document.createElement('span');
+        nameEl.style.cssText = `color:${done ? 'var(--teal)' : 'var(--text-dim)'};font-size:12px`;
+        nameEl.textContent = (done ? '✓ ' : '○ ') + h.name;
+        const streakEl = document.createElement('span');
+        streakEl.style.cssText = 'font-size:10px;color:var(--text-faint)';
+        streakEl.textContent = streak > 0 ? `${streak}d streak` : 'no streak';
+        tile.append(nameEl, streakEl);
+        tile.addEventListener('click', () => {
+          const list = loadHabits();
+          const idx = list.findIndex(x => x.name === h.name);
+          if (idx === -1) return;
+          const dates = new Set(list[idx].dates || []);
+          if (done) { dates.delete(today); } else { dates.add(today); }
+          list[idx].dates = [...dates];
+          saveHabits(list);
+          render('');
+        });
+        hGrid.appendChild(tile);
+      });
+      hSec.appendChild(hGrid);
+      board.appendChild(hSec);
+    }
+  }
+
   // Quick Links (user bookmarks from settings) — shown before APPS groups
   const bookmarks = parseBookmarks(loadSettings().bookmarks || '');
   const filteredBms = bookmarks.filter(b =>
@@ -1085,8 +1132,10 @@ const SLASH_CMDS = [
   { icon:'⏰', name:'/remind',   desc:'/remind <mins> <message>',            submit:false },
   { icon:'▦',  name:'/week',      desc:'This week\'s tasks by day',           submit:true  },
   { icon:'◎',  name:'/sessions', desc:'Completed focus session history',     submit:true  },
-  { icon:'◈',  name:'/today',    desc:'Today\'s snapshot: tasks, PRs, weather', submit:true },
+  { icon:'◈',  name:'/today',    desc:'Today\'s snapshot: tasks, PRs, weather', submit:true  },
   { icon:'⧗',  name:'/countdown', desc:'/countdown add YYYY-MM-DD label',   submit:false },
+  { icon:'◉',  name:'/habits',   desc:'Daily habit tracker — streaks & board',  submit:true  },
+  { icon:'✎',  name:'/log',      desc:'/log <text>  timestamped daily journal',  submit:false },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -1513,6 +1562,14 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
   else if (/^\/countdown\b/i.test(raw)) {
     const arg = raw.replace(/^\/countdown\s*/i, '').trim();
     await handleCountdown(arg);
+  }
+  else if (/^\/habits\b/i.test(raw)) {
+    const arg = raw.replace(/^\/habits\s*/i, '').trim();
+    await handleHabits(arg);
+  }
+  else if (/^\/log\b/i.test(raw)) {
+    const arg = raw.replace(/^\/log\s*/i, '').trim();
+    await handleLog(arg);
   }
   else if (/^\/remind\b/i.test(raw)) {
     const arg = raw.replace(/^\/remind\s*/i, '').trim();
@@ -3400,6 +3457,258 @@ async function handleCountdown(arg) {
   foot.appendChild(hint);
 }
 
+/* ---- /habits — daily habit tracker ---- */
+async function handleHabits(arg) {
+  // add <name>
+  const addMatch = arg.match(/^add\s+(.+)$/i);
+  if (addMatch) {
+    const name = addMatch[1].trim();
+    const list = loadHabits();
+    if (!list.find(h => h.name.toLowerCase() === name.toLowerCase())) {
+      list.push({ name, dates: [] });
+      saveHabits(list);
+      render('');
+    }
+    const card = makeCard('/habits add', '◉ Habits', true);
+    card.classList.remove('loading');
+    threadList.appendChild(card);
+    thread.classList.add('visible');
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    filterInput.value = '';
+    const n = card.dataset.n;
+    document.getElementById(`ex-${n}-body`).innerHTML =
+      `<span style="font-family:var(--mono);font-size:12px;color:var(--teal)">◉ ${esc(name)}</span>` +
+      `<span style="font-family:var(--mono);font-size:11px;color:var(--text-faint);display:block;margin-top:4px">Habit added — click tile on board to mark done daily.</span>`;
+    return;
+  }
+
+  // rm <name>
+  const rmMatch = arg.match(/^(?:rm|remove)\s+(.+)$/i);
+  if (rmMatch) {
+    const name = rmMatch[1].trim();
+    const before = loadHabits();
+    const after = before.filter(h => h.name.toLowerCase() !== name.toLowerCase());
+    saveHabits(after);
+    render('');
+    const card = makeCard('/habits rm', '◉ Habits', true);
+    card.classList.remove('loading');
+    threadList.appendChild(card);
+    thread.classList.add('visible');
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    filterInput.value = '';
+    const n = card.dataset.n;
+    const removed = before.length - after.length;
+    document.getElementById(`ex-${n}-body`).innerHTML = removed
+      ? `<span style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">Removed <strong>${esc(name)}</strong>.</span>`
+      : `<span style="font-family:var(--mono);font-size:12px;color:var(--text-faint)">No habit named "${esc(name)}" found.</span>`;
+    return;
+  }
+
+  // done <name>  (toggle today's completion from command bar)
+  const doneMatch = arg.match(/^done\s+(.+)$/i);
+  if (doneMatch) {
+    const name = doneMatch[1].trim();
+    const list = loadHabits();
+    const h = list.find(x => x.name.toLowerCase() === name.toLowerCase());
+    const card = makeCard('/habits done', '◉ Habits', true);
+    card.classList.remove('loading');
+    threadList.appendChild(card);
+    thread.classList.add('visible');
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    filterInput.value = '';
+    const n = card.dataset.n;
+    const body = document.getElementById(`ex-${n}-body`);
+    if (!h) {
+      body.innerHTML = `<span style="font-family:var(--mono);font-size:12px;color:var(--text-faint)">No habit named "${esc(name)}".</span>`;
+      return;
+    }
+    const today = _todayStr();
+    const dates = new Set(h.dates || []);
+    const wasDone = dates.has(today);
+    if (wasDone) { dates.delete(today); } else { dates.add(today); }
+    h.dates = [...dates];
+    saveHabits(list);
+    render('');
+    const streak = _habitStreak(h.dates);
+    body.innerHTML =
+      `<span style="font-family:var(--mono);font-size:12px;color:var(--teal)">${wasDone ? '○' : '✓'} ${esc(h.name)}</span>` +
+      `<span style="font-family:var(--mono);font-size:11px;color:var(--text-faint);display:block;margin-top:4px">` +
+      `${wasDone ? 'Unmarked for today.' : `Marked done · ${streak}d streak`}</span>`;
+    return;
+  }
+
+  // bare /habits — show all with streaks and history bars
+  const card = makeCard('/habits', '◉ Habits', true);
+  card.classList.remove('loading');
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.className = 'exchange-body';
+
+  const habits = loadHabits();
+  if (!habits.length) {
+    body.innerHTML =
+      `<span style="font-family:var(--mono);font-size:12px;color:var(--text-faint)">No habits tracked yet.</span>` +
+      `<span style="font-family:var(--mono);font-size:11px;color:var(--text-faint);display:block;margin-top:6px">` +
+      `Add one: <code>/habits add Meditate</code></span>`;
+    return;
+  }
+
+  const today = _todayStr();
+  const container = document.createElement('div');
+  container.style.cssText = 'display:flex;flex-direction:column;gap:10px';
+
+  habits.forEach(h => {
+    const dates = new Set(h.dates || []);
+    const done = dates.has(today);
+    const streak = _habitStreak(h.dates || []);
+    const total = dates.size;
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+
+    const top = document.createElement('div');
+    top.style.cssText = 'display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px';
+    top.innerHTML =
+      `<span style="color:${done ? 'var(--teal)' : 'var(--text-dim)'};flex:1">${done ? '✓' : '○'} ${esc(h.name)}</span>` +
+      `<span style="color:var(--amber);font-size:11px">${streak > 0 ? streak + 'd 🔥' : '—'}</span>` +
+      `<span style="color:var(--text-faint);font-size:10px">${total} total</span>`;
+
+    // Last 14 days mini-grid
+    const grid = document.createElement('div');
+    grid.style.cssText = 'display:flex;gap:3px;padding-left:14px';
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const ds = d.toISOString().slice(0, 10);
+      const isToday = ds === today;
+      const filled = dates.has(ds);
+      const cell = document.createElement('div');
+      cell.style.cssText =
+        `width:12px;height:12px;border-radius:2px;` +
+        `background:${filled ? 'var(--teal)' : 'var(--bg-soft)'};` +
+        `border:1px solid ${isToday ? 'var(--amber-dim)' : 'var(--line)'}`;
+      cell.title = ds;
+      grid.appendChild(cell);
+    }
+
+    row.append(top, grid);
+    container.appendChild(row);
+  });
+
+  body.appendChild(container);
+
+  const foot = document.getElementById(`ex-${n}-foot`);
+  const hint = document.createElement('span');
+  hint.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--text-faint)';
+  hint.textContent = '/habits add <name> · /habits done <name> · /habits rm <name>';
+  foot.appendChild(hint);
+}
+
+/* ---- /log — timestamped daily journal ---- */
+async function handleLog(arg) {
+  const today = _todayStr();
+
+  if (arg) {
+    // append entry
+    const obj = loadLog();
+    if (!obj[today]) obj[today] = [];
+    const now = new Date();
+    const ts = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    obj[today].push(`${ts}: ${arg}`);
+    // keep only last 60 days
+    const keys = Object.keys(obj).sort();
+    if (keys.length > 60) { keys.slice(0, keys.length - 60).forEach(k => delete obj[k]); }
+    saveLog(obj);
+
+    const card = makeCard('/log', '✎ Log', true);
+    card.classList.remove('loading');
+    threadList.appendChild(card);
+    thread.classList.add('visible');
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    filterInput.value = '';
+    const n = card.dataset.n;
+    document.getElementById(`ex-${n}-body`).innerHTML =
+      `<span style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">${esc(ts + ': ' + arg)}</span>` +
+      `<span style="font-family:var(--mono);font-size:10px;color:var(--text-faint);display:block;margin-top:3px">` +
+      `${obj[today].length} entr${obj[today].length === 1 ? 'y' : 'ies'} today</span>`;
+    return;
+  }
+
+  // bare /log — show today's entries (+ option to view yesterday)
+  const card = makeCard('/log', '✎ Log', true);
+  card.classList.remove('loading');
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.className = 'exchange-body';
+
+  const obj = loadLog();
+  const allDays = Object.keys(obj).sort().reverse().slice(0, 7);
+
+  if (!allDays.length) {
+    body.innerHTML =
+      `<span style="font-family:var(--mono);font-size:12px;color:var(--text-faint)">No log entries yet.</span>` +
+      `<span style="font-family:var(--mono);font-size:11px;color:var(--text-faint);display:block;margin-top:6px">` +
+      `Add one: <code>/log Finished the auth PR</code></span>`;
+    return;
+  }
+
+  const container = document.createElement('div');
+  container.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  allDays.forEach(day => {
+    const entries = obj[day] || [];
+    const d = new Date(day + 'T00:00:00');
+    const label = day === today ? 'Today' : `${DAYS[d.getDay()]} ${day.slice(5)}`;
+
+    const sec = document.createElement('div');
+    const hdr = document.createElement('div');
+    hdr.style.cssText =
+      `font-family:var(--mono);font-size:10px;letter-spacing:.06em;margin-bottom:5px;` +
+      `color:${day === today ? 'var(--amber)' : 'var(--text-faint)'}`;
+    hdr.textContent = `${label} · ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`;
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+    entries.forEach(e => {
+      const item = document.createElement('div');
+      item.style.cssText = 'font-family:var(--mono);font-size:11px;color:var(--text-dim);display:flex;gap:8px';
+      const [timePart, ...rest] = e.split(': ');
+      item.innerHTML =
+        `<span style="color:var(--text-faint);flex-shrink:0">${esc(timePart)}</span>` +
+        `<span>${esc(rest.join(': '))}</span>`;
+      list.appendChild(item);
+    });
+
+    sec.append(hdr, list);
+    container.appendChild(sec);
+  });
+
+  body.appendChild(container);
+
+  const foot = document.getElementById(`ex-${n}-foot`);
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'followup-btn';
+  clearBtn.textContent = '✕ clear today';
+  clearBtn.addEventListener('click', () => {
+    const o = loadLog();
+    delete o[today];
+    saveLog(o);
+    body.innerHTML = '';
+    body.textContent = 'Today\'s log cleared.';
+    clearBtn.remove();
+  });
+  foot.appendChild(clearBtn);
+}
+
 /* ---- keyboard help overlay ---- */
 const kbdHelp = document.getElementById('kbd-help');
 function toggleHelp(show) {
@@ -3615,6 +3924,40 @@ function _daysUntil(dateStr) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   const tgt = new Date(dateStr + 'T00:00:00'); tgt.setHours(0, 0, 0, 0);
   return Math.round((tgt - now) / 86400000);
+}
+
+const HABITS_LS = 'jarvis_habits';
+const LOG_LS    = 'jarvis_log';
+
+function loadHabits() {
+  try { return JSON.parse(localStorage.getItem(HABITS_LS) || '[]'); } catch { return []; }
+}
+function saveHabits(list) {
+  try { localStorage.setItem(HABITS_LS, JSON.stringify(list)); } catch {}
+}
+function _habitStreak(dates) {
+  if (!dates || !dates.length) return 0;
+  const sorted = [...new Set(dates)].sort().reverse();
+  let streak = 0;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let cursor = new Date(today);
+  for (const d of sorted) {
+    const dt = new Date(d + 'T00:00:00'); dt.setHours(0, 0, 0, 0);
+    const diff = Math.round((cursor - dt) / 86400000);
+    if (diff === 0 || diff === 1) { streak++; cursor = dt; }
+    else break;
+  }
+  return streak;
+}
+function _todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function loadLog() {
+  try { return JSON.parse(localStorage.getItem(LOG_LS) || '{}'); } catch { return {}; }
+}
+function saveLog(obj) {
+  try { localStorage.setItem(LOG_LS, JSON.stringify(obj)); } catch {}
 }
 
 function saveFocusSession(durationMins) {
