@@ -60,7 +60,7 @@ body::before{
 .greet p{font-family:var(--mono);font-size:12px;color:var(--text-dim);letter-spacing:.06em;margin-top:6px}
 
 /* ---- status strip ---- */
-.status{display:flex;flex-wrap:wrap;gap:10px;margin:0 4px 32px}
+.status{display:flex;flex-wrap:wrap;gap:10px}
 .chip{font-family:var(--mono);font-size:11px;letter-spacing:.06em;border:1px solid var(--line-hi);
   background:var(--panel);padding:6px 12px;border-radius:6px;display:flex;align-items:center;gap:8px;color:var(--text-dim)}
 .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
@@ -301,6 +301,25 @@ body::before{
 .foot a{color:var(--text-dim);text-decoration:none;border-bottom:1px dotted var(--line-hi)}
 .foot a:hover{color:var(--amber)}
 
+/* ---- focus timer (topbar) ---- */
+.focus-timer{display:flex;align-items:center;gap:8px;font-family:var(--mono);
+  border:1px solid var(--amber-dim);background:var(--amber-glow);
+  padding:6px 12px;border-radius:7px}
+.focus-timer[hidden]{display:none}
+.focus-phase{font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--amber-dim)}
+.focus-clock{font-size:22px;color:var(--amber);font-weight:500;letter-spacing:.05em;line-height:1}
+.focus-stop-btn{background:none;border:none;color:var(--text-faint);font-size:13px;cursor:pointer;
+  padding:0 2px;line-height:1;transition:color .12s}
+.focus-stop-btn:hover{color:var(--amber)}
+/* ---- status row ---- */
+.status-row{display:flex;align-items:flex-start;gap:8px;margin:0 4px 32px}
+.status{display:flex;flex-wrap:wrap;gap:10px}
+.status-refresh-btn{font-size:14px;background:none;border:1px solid var(--line);
+  color:var(--text-faint);border-radius:6px;padding:4px 8px;cursor:pointer;
+  transition:color .12s,border-color .12s;flex-shrink:0;line-height:1}
+.status-refresh-btn:hover{color:var(--amber);border-color:var(--amber-dim)}
+/* ---- keyboard card nav highlight ---- */
+.exchange.nav-focus{outline:2px solid var(--amber-dim);outline-offset:-1px}
 /* ---- settings button ---- */
 .settings-btn{background:none;border:1px solid var(--line-hi);color:var(--text-faint);
   font-size:15px;padding:5px 9px;border-radius:6px;cursor:pointer;line-height:1;
@@ -350,8 +369,13 @@ body::before{
       <div class="brand-mark" aria-hidden="true"></div>
       <div>
         <div class="brand-name">JARVIS</div>
-        <div class="brand-sub">Central Interface · v0.3</div>
+        <div class="brand-sub">Central Interface · v0.4</div>
       </div>
+    </div>
+    <div id="focus-timer" hidden class="focus-timer">
+      <span id="focus-phase" class="focus-phase">FOCUS</span>
+      <span id="focus-clock" class="focus-clock">25:00</span>
+      <button type="button" id="focus-stop" class="focus-stop-btn" title="Stop timer (focus stop)">✕</button>
     </div>
     <div class="clockbox">
       <div class="clock" id="clock">--:--:--</div>
@@ -365,8 +389,11 @@ body::before{
     <p id="tagline">All systems nominal · select a module to engage</p>
   </section>
 
-  <div class="status" id="status">
-    <div class="chip"><span class="dot idle"></span>Loading status…</div>
+  <div class="status-row">
+    <div class="status" id="status">
+      <div class="chip"><span class="dot idle"></span>Loading status…</div>
+    </div>
+    <button type="button" id="status-refresh" class="status-refresh-btn" title="Refresh status (auto every 5 min)">↻</button>
   </div>
 
   <div class="modes" id="modes">
@@ -427,6 +454,11 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/starred</span><span class="kbd-desc">Browse starred exchanges</span></div>
       <div class="kbd-row"><span class="kbd-key">/find …</span><span class="kbd-desc">Keyword search through thread</span></div>
       <div class="kbd-row"><span class="kbd-key">/clear</span><span class="kbd-desc">Clear conversation thread</span></div>
+      <div class="kbd-row"><span class="kbd-key">/focus [mins]</span><span class="kbd-desc">Start Pomodoro timer (default 25 m)</span></div>
+      <div class="kbd-row"><span class="kbd-key">/focus stop</span><span class="kbd-desc">Cancel running focus timer</span></div>
+      <div class="kbd-row"><span class="kbd-key">/break [mins]</span><span class="kbd-desc">Start break timer (default 5 m)</span></div>
+      <div class="kbd-row"><span class="kbd-key">[ ]</span><span class="kbd-desc">Navigate between thread cards</span></div>
+      <div class="kbd-row"><span class="kbd-key">f</span><span class="kbd-desc">Quick 25-min focus session</span></div>
       <div class="kbd-row"><span class="kbd-key">note: …</span><span class="kbd-desc">Add to Todoist inbox (no date)</span></div>
     </div>
   </div>
@@ -800,6 +832,7 @@ let exchCount = 0;    // monotonic id for DOM elements
 
 document.getElementById('thread-clear').addEventListener('click', () => {
   exchanges = [];
+  _navCardIdx = -1;
   try { localStorage.removeItem(EXCHANGES_LS); } catch {}
   threadList.innerHTML = '';
   thread.classList.remove('visible');
@@ -881,6 +914,8 @@ const SLASH_CMDS = [
   { icon:'★',  name:'/starred', desc:'Browse starred exchanges',       submit:true },
   { icon:'🔍', name:'/find',    desc:'/find <keyword>  search thread', submit:false },
   { icon:'⊗',  name:'/clear',   desc:'Clear conversation thread',      submit:true },
+  { icon:'◎',  name:'/focus',   desc:'/focus [mins]  Pomodoro timer',  submit:false },
+  { icon:'◎',  name:'/break',   desc:'/break [mins]  Break timer',     submit:false },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -1270,6 +1305,14 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
     await handleFind(q);
   }
   else if (/^\/clear\b/i.test(raw)) { document.getElementById('thread-clear').click(); }
+  else if (/^\/focus\b/i.test(raw)) {
+    const arg = raw.replace(/^\/focus\s*/i, '').trim();
+    await handleFocus(arg);
+  }
+  else if (/^\/break\b/i.test(raw)) {
+    const arg = raw.replace(/^\/break\s*/i, '').trim();
+    await handleBreak(arg);
+  }
   else if (/^task[: ]+/i.test(raw)) {
     let content = raw.match(/^task[: ]+(.*)/i)[1].trim();
     let dueString = 'today';
@@ -2243,6 +2286,7 @@ document.addEventListener('keydown', e => {
     if (kbdHelp.classList.contains('visible')) { toggleHelp(false); return; }
     if (thread.classList.contains('visible')) {
       exchanges = [];
+      _navCardIdx = -1;
       threadList.innerHTML = '';
       thread.classList.remove('visible');
       filterInput.value = '';
@@ -2267,6 +2311,13 @@ document.addEventListener('keydown', e => {
 
   // , — open settings
   if (e.key === ',') { openSettings(); return; }
+
+  // [ ] — navigate thread cards
+  if (e.key === '[') { e.preventDefault(); navigateCards(-1); return; }
+  if (e.key === ']') { e.preventDefault(); navigateCards(1); return; }
+
+  // f — quick 25-min focus (fills command bar)
+  if (e.key === 'f') { filterInput.value = '/focus '; filterInput.focus(); return; }
 
   // 1-6 — select mode by position
   const idx = parseInt(e.key, 10) - 1;
@@ -2398,8 +2449,136 @@ settingsCancel.addEventListener('click', closeSettings);
 // Click backdrop to close
 settingsOverlay.addEventListener('click', e => { if (e.target === settingsOverlay) closeSettings(); });
 
-/* ---- auto-refresh status every 60 s ---- */
-setInterval(loadStatus, 60_000);
+/* ---- focus / Pomodoro timer ---- */
+const focusTimerEl    = document.getElementById('focus-timer');
+const focusClockEl    = document.getElementById('focus-clock');
+const focusPhaseEl    = document.getElementById('focus-phase');
+const focusStopEl     = document.getElementById('focus-stop');
+const focusTimerState = { intervalId: null, secondsLeft: 0, phase: 'idle' };
+
+function _fmtTimer(secs) {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function _tickFocusTimer() {
+  focusTimerState.secondsLeft--;
+  if (focusTimerState.secondsLeft <= 0) {
+    clearInterval(focusTimerState.intervalId);
+    focusTimerState.intervalId = null;
+    const phase = focusTimerState.phase;
+    focusTimerState.phase = 'idle';
+    focusTimerEl.hidden = true;
+    const isWork = phase === 'work';
+    const msg = isWork
+      ? 'Focus session complete! Time for a break.'
+      : 'Break over. Ready to focus again?';
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('JARVIS', { body: msg });
+    }
+    const label = isWork ? '/focus — session complete' : '/break — break over';
+    const card = makeCard(label, '◎ Timer', true);
+    threadList.appendChild(card);
+    thread.classList.add('visible');
+    const body = document.getElementById(`ex-${card.dataset.n}-body`);
+    body.className = 'exchange-body';
+    body.textContent = msg;
+    card.classList.remove('loading');
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+  focusClockEl.textContent = _fmtTimer(focusTimerState.secondsLeft);
+}
+
+function startFocus(seconds, phase) {
+  if (focusTimerState.intervalId) clearInterval(focusTimerState.intervalId);
+  focusTimerState.secondsLeft = seconds;
+  focusTimerState.phase = phase;
+  focusPhaseEl.textContent = phase === 'work' ? 'FOCUS' : 'BREAK';
+  focusClockEl.textContent = _fmtTimer(seconds);
+  focusTimerEl.hidden = false;
+  focusTimerState.intervalId = setInterval(_tickFocusTimer, 1000);
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function stopFocus() {
+  if (focusTimerState.intervalId) {
+    clearInterval(focusTimerState.intervalId);
+    focusTimerState.intervalId = null;
+  }
+  focusTimerState.phase = 'idle';
+  focusTimerEl.hidden = true;
+}
+
+focusStopEl.addEventListener('click', stopFocus);
+
+async function handleFocus(arg) {
+  const trimmed = (arg || '').trim();
+  if (/^(stop|cancel|quit)$/i.test(trimmed)) {
+    stopFocus();
+    const card = makeCard('/focus stop', '◎ Timer', true);
+    threadList.appendChild(card);
+    thread.classList.add('visible');
+    const body = document.getElementById(`ex-${card.dataset.n}-body`);
+    body.className = 'exchange-body';
+    body.textContent = 'Focus session stopped.';
+    card.classList.remove('loading');
+    filterInput.value = '';
+    return;
+  }
+  const mins = parseInt(trimmed) || 25;
+  startFocus(mins * 60, 'work');
+  const card = makeCard(`/focus ${mins}m`, '◎ Timer', true);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const body = document.getElementById(`ex-${card.dataset.n}-body`);
+  body.className = 'exchange-body';
+  body.textContent =
+    `Focus session started: ${mins} minute${mins !== 1 ? 's' : ''}. Timer running in the header.`;
+  card.classList.remove('loading');
+  filterInput.value = '';
+}
+
+async function handleBreak(arg) {
+  const mins = parseInt((arg || '').trim()) || 5;
+  startFocus(mins * 60, 'break');
+  const card = makeCard(`/break ${mins}m`, '◎ Timer', true);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const body = document.getElementById(`ex-${card.dataset.n}-body`);
+  body.className = 'exchange-body';
+  body.textContent =
+    `Break timer started: ${mins} minute${mins !== 1 ? 's' : ''}. Timer running in the header.`;
+  card.classList.remove('loading');
+  filterInput.value = '';
+}
+
+/* ---- keyboard card navigation ---- */
+let _navCardIdx = -1;
+
+function navigateCards(dir) {
+  const cards = [...threadList.querySelectorAll('.exchange:not(.find-dim)')];
+  if (!cards.length) return;
+  if (_navCardIdx < 0 || _navCardIdx >= cards.length) {
+    _navCardIdx = dir > 0 ? 0 : cards.length - 1;
+  } else {
+    _navCardIdx = Math.max(0, Math.min(cards.length - 1, _navCardIdx + dir));
+  }
+  const card = cards[_navCardIdx];
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  card.classList.add('nav-focus');
+  setTimeout(() => card.classList.remove('nav-focus'), 900);
+}
+
+/* ---- auto-refresh status every 5 min ---- */
+setInterval(loadStatus, 300_000);
+/* ---- status refresh button ---- */
+document.getElementById('status-refresh').addEventListener('click', loadStatus);
 
 /* ---- refresh status when tab becomes visible again ---- */
 document.addEventListener('visibilitychange', () => {
