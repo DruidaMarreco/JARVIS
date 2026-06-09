@@ -209,6 +209,14 @@ body::before{
   border-radius:3px;transition:border-color .1s,color .1s;margin-left:auto}
 .copy-reply-btn:hover{border-color:var(--teal-dim);color:var(--teal)}
 .copy-reply-btn.copied{border-color:var(--teal);color:var(--teal)}
+.reask-btn{font-family:var(--mono);font-size:9px;letter-spacing:.04em;cursor:pointer;
+  border:1px solid var(--line);background:none;color:var(--text-faint);padding:1px 7px;
+  border-radius:3px;transition:border-color .1s,color .1s}
+.reask-btn:hover{border-color:var(--teal-dim);color:var(--teal)}
+.scratch-ta{width:100%;min-height:140px;resize:vertical;font-family:var(--mono);font-size:13px;
+  background:transparent;border:none;outline:none;color:var(--text);line-height:1.6;
+  padding:14px 16px;border-bottom:1px solid var(--line);display:block}
+.scratch-ta::placeholder{color:var(--text-faint)}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 .stream-cursor{display:inline-block;animation:blink .8s step-start infinite;
   color:var(--amber);font-size:14px;line-height:1;vertical-align:text-bottom}
@@ -447,6 +455,8 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/prs</span><span class="kbd-desc">Open pull requests</span></div>
       <div class="kbd-row"><span class="kbd-key">/events</span><span class="kbd-desc">Recent GitHub activity</span></div>
       <div class="kbd-row"><span class="kbd-key">/gh …</span><span class="kbd-desc">Search GitHub repositories</span></div>
+      <div class="kbd-row"><span class="kbd-key">/issues …</span><span class="kbd-desc">Search GitHub issues</span></div>
+      <div class="kbd-row"><span class="kbd-key">/scratch</span><span class="kbd-desc">Persistent scratch-pad (auto-saved)</span></div>
       <div class="kbd-row"><span class="kbd-key">/todo …</span><span class="kbd-desc">Search all Todoist tasks</span></div>
       <div class="kbd-row"><span class="kbd-key">/models</span><span class="kbd-desc">Local Ollama models</span></div>
       <div class="kbd-row"><span class="kbd-key">/weather</span><span class="kbd-desc">Current weather</span></div>
@@ -916,6 +926,8 @@ const SLASH_CMDS = [
   { icon:'⊗',  name:'/clear',   desc:'Clear conversation thread',      submit:true },
   { icon:'◎',  name:'/focus',   desc:'/focus [mins]  Pomodoro timer',  submit:false },
   { icon:'◎',  name:'/break',   desc:'/break [mins]  Break timer',     submit:false },
+  { icon:'⑂',  name:'/issues',  desc:'/issues <query>  search GitHub issues', submit:false },
+  { icon:'✎',  name:'/scratch', desc:'Persistent scratch-pad',          submit:true },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -1225,6 +1237,18 @@ function fillCard(card, data, elapsed) {
       }
     });
     foot.appendChild(copyBtn);
+
+    const reaskBtn = document.createElement('button');
+    reaskBtn.type = 'button';
+    reaskBtn.className = 'reask-btn';
+    reaskBtn.textContent = '↻ re-ask';
+    reaskBtn.title = 'Edit and re-run this query';
+    reaskBtn.addEventListener('click', () => {
+      filterInput.value = card.dataset.query || '';
+      filterInput.focus();
+      filterInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    foot.appendChild(reaskBtn);
   }
 }
 
@@ -1305,6 +1329,12 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
     await handleFind(q);
   }
   else if (/^\/clear\b/i.test(raw)) { document.getElementById('thread-clear').click(); }
+  else if (/^\/issues\b/i.test(raw)) {
+    const q = raw.replace(/^\/issues\s*/i, '').trim();
+    if (q) { await handleGithubIssues(q); }
+    else { filterInput.value = '/issues '; filterInput.focus(); }
+  }
+  else if (/^\/scratch\b/i.test(raw)) { await handleScratch(); }
   else if (/^\/focus\b/i.test(raw)) {
     const arg = raw.replace(/^\/focus\s*/i, '').trim();
     await handleFocus(arg);
@@ -2031,6 +2061,18 @@ async function _streamOllama(card, query, model, history, modeLabel, opts = {}) 
       }
     });
     foot.appendChild(copyBtn);
+
+    const reaskBtn = document.createElement('button');
+    reaskBtn.type = 'button';
+    reaskBtn.className = 'reask-btn';
+    reaskBtn.textContent = '↻ re-ask';
+    reaskBtn.title = 'Edit and re-run this query';
+    reaskBtn.addEventListener('click', () => {
+      filterInput.value = card.dataset.query || '';
+      filterInput.focus();
+      filterInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    foot.appendChild(reaskBtn);
   }
 
   // Show elapsed time in exchange meta (parity with Hey Claude path)
@@ -2115,6 +2157,106 @@ async function handleGithubSearch(query) {
     body.textContent = `GitHub search failed: ${err.message}`;
   }
   card.classList.remove('loading');
+}
+
+/* ---- /issues — GitHub issue search ---- */
+async function handleGithubIssues(query) {
+  const card = makeCard(`/issues ${query}`, '⑂ GitHub', true);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.textContent = 'Searching GitHub issues…';
+  filterInput.value = '';
+
+  try {
+    const r = await fetch(
+      `/api/github/issues?${new URLSearchParams({ q: query, limit: 8 })}`
+    );
+    const data = await r.json();
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    if (!data.issues || !data.issues.length) {
+      body.textContent = `No issues found for "${query}".`;
+      return;
+    }
+    const ul = document.createElement('ul');
+    ul.style.cssText = 'list-style:none;padding:0;display:flex;flex-direction:column;gap:10px';
+    data.issues.forEach(issue => {
+      const li = document.createElement('li');
+      const stateColor = issue.state === 'open' ? 'var(--teal)' : 'var(--text-faint)';
+      const stateIcon = issue.state === 'open' ? '◉' : '◎';
+      li.innerHTML =
+        `<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">` +
+        `<a href="${esc(issue.url)}" target="_blank" rel="noopener" ` +
+        `style="color:var(--teal);font-family:var(--mono);font-size:12px;` +
+        `text-decoration:none;border-bottom:1px dotted var(--teal-dim)">` +
+        `#${issue.number} ${esc(issue.title)}</a></div>` +
+        `<div style="font-family:var(--mono);font-size:10px;color:var(--text-faint);margin-top:2px">` +
+        `${esc(issue.repo)} · ` +
+        `<span style="color:${stateColor}">${stateIcon} ${esc(issue.state)}</span>` +
+        ` · ${esc(issue.updated)} · ${issue.comments} comment${issue.comments !== 1 ? 's' : ''}` +
+        `</div>`;
+      ul.appendChild(li);
+    });
+    body.innerHTML = '';
+    body.appendChild(ul);
+  } catch (err) {
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    body.textContent = `GitHub issues search failed: ${err.message}`;
+  }
+}
+
+/* ---- /scratch — persistent local scratchpad ---- */
+const SCRATCH_LS = 'jarvis_scratch';
+
+async function handleScratch() {
+  // If a scratch card already exists, scroll to it and focus
+  const existing = threadList.querySelector('[data-scratch="1"]');
+  if (existing) {
+    existing.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    existing.querySelector('.scratch-ta')?.focus();
+    filterInput.value = '';
+    return;
+  }
+  const card = makeCard('/scratch', '✎ Notes', true);
+  card.dataset.scratch = '1';
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  card.classList.remove('loading');
+  filterInput.value = '';
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.className = 'exchange-body';
+  body.style.padding = '0';
+
+  const ta = document.createElement('textarea');
+  ta.className = 'scratch-ta';
+  ta.placeholder = 'Jot notes here — auto-saved to localStorage…';
+  try { ta.value = localStorage.getItem(SCRATCH_LS) || ''; } catch {}
+  ta.addEventListener('input', () => {
+    try { localStorage.setItem(SCRATCH_LS, ta.value); } catch {}
+  });
+  body.appendChild(ta);
+
+  const foot = document.getElementById(`ex-${n}-foot`);
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'followup-btn';
+  clearBtn.textContent = '✕ clear';
+  clearBtn.title = 'Wipe scratch contents';
+  clearBtn.addEventListener('click', () => {
+    ta.value = '';
+    try { localStorage.removeItem(SCRATCH_LS); } catch {}
+    ta.focus();
+  });
+  foot.appendChild(clearBtn);
+
+  ta.focus();
 }
 
 /* ---- /find — client-side thread keyword search ---- */
