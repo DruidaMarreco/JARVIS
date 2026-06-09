@@ -114,6 +114,48 @@ async def search_repos(query: str, limit: int = 6) -> list[dict]:
         return []
 
 
+async def my_repos(limit: int = 8) -> list[dict]:
+    """Return the configured user's own repositories, most recently pushed first.
+
+    Each item: {name, full_name, description, url, stars, language, pushed, private}.
+    Returns an empty list on any failure.
+    """
+    username = _username()
+    if not username:
+        return []
+    headers = {**_HEADERS}
+    token = os.getenv("GITHUB_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.get(
+                f"{_API}/users/{username}/repos",
+                headers=headers,
+                params={"sort": "pushed", "per_page": min(limit, 30), "type": "owner"},
+            )
+            r.raise_for_status()
+            items = r.json()
+            result = []
+            for item in items[:limit]:
+                result.append(
+                    {
+                        "name": item.get("name", ""),
+                        "full_name": item.get("full_name", ""),
+                        "description": item.get("description") or "",
+                        "url": item.get("html_url", ""),
+                        "stars": item.get("stargazers_count", 0),
+                        "language": item.get("language") or "",
+                        "pushed": (item.get("pushed_at") or "")[:10],
+                        "private": item.get("private", False),
+                    }
+                )
+            return result
+    except Exception as exc:
+        _log.warning("github.my_repos() failed: %s", exc)
+        return []
+
+
 async def search_issues(query: str, limit: int = 8) -> list[dict]:
     """Search GitHub issues matching query, most recently updated first.
 
