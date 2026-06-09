@@ -487,6 +487,11 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/standup</span><span class="kbd-desc">AI-generated daily standup</span></div>
       <div class="kbd-row"><span class="kbd-key">/ping</span><span class="kbd-desc">Service health &amp; latency check</span></div>
       <div class="kbd-row"><span class="kbd-key">/remind N msg</span><span class="kbd-desc">Browser notification reminder</span></div>
+      <div class="kbd-row"><span class="kbd-key">/week</span><span class="kbd-desc">This week's tasks grouped by day</span></div>
+      <div class="kbd-row"><span class="kbd-key">/sessions</span><span class="kbd-desc">Completed focus session history</span></div>
+      <div class="kbd-row" style="margin-top:12px;border-top:1px solid var(--line-hi);padding-top:12px">
+        <span class="kbd-key">s</span><span class="kbd-desc">Fill /standup in command bar</span></div>
+      <div class="kbd-row"><span class="kbd-key">b</span><span class="kbd-desc">Run /brief immediately</span></div>
     </div>
   </div>
 
@@ -1043,9 +1048,11 @@ const SLASH_CMDS = [
   { icon:'✓',  name:'/done',    desc:'/done <keyword>  complete a task',  submit:false },
   { icon:'↺',  name:'/history', desc:'Browse past queries',              submit:true },
   { icon:'↗',  name:'/open',    desc:'/open <name>  open bookmark or app', submit:false },
-  { icon:'⊛',  name:'/standup', desc:'AI-generated daily standup',         submit:true  },
-  { icon:'◉',  name:'/ping',    desc:'Service health & latency check',      submit:true  },
-  { icon:'⏰', name:'/remind',  desc:'/remind <mins> <message>',            submit:false },
+  { icon:'⊛',  name:'/standup',  desc:'AI-generated daily standup',          submit:true  },
+  { icon:'◉',  name:'/ping',     desc:'Service health & latency check',      submit:true  },
+  { icon:'⏰', name:'/remind',   desc:'/remind <mins> <message>',            submit:false },
+  { icon:'▦',  name:'/week',     desc:'This week\'s tasks by day',           submit:true  },
+  { icon:'◎',  name:'/sessions', desc:'Completed focus session history',     submit:true  },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -1464,8 +1471,10 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
     else { filterInput.value = '/issues '; filterInput.focus(); }
   }
   else if (/^\/scratch\b/i.test(raw)) { await handleScratch(); }
-  else if (/^\/standup\b/i.test(raw)) { await handleStandup(); }
-  else if (/^\/ping\b/i.test(raw))    { await handlePing(); }
+  else if (/^\/standup\b/i.test(raw))  { await handleStandup(); }
+  else if (/^\/ping\b/i.test(raw))     { await handlePing(); }
+  else if (/^\/week\b/i.test(raw))     { await handleWeek(); }
+  else if (/^\/sessions\b/i.test(raw)) { await handleSessions(); }
   else if (/^\/remind\b/i.test(raw)) {
     const arg = raw.replace(/^\/remind\s*/i, '').trim();
     await handleRemind(arg);
@@ -2929,6 +2938,221 @@ async function handleRemind(arg) {
   }, mins * 60 * 1000);
 }
 
+/* ---- /week — this week's tasks grouped by day ---- */
+async function handleWeek() {
+  const card = makeCard('/week', '▦ This Week', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.textContent = 'Fetching this week\'s tasks…';
+  filterInput.value = '';
+  askBtn.disabled = true;
+  render('');
+
+  try {
+    const r = await fetch(`/api/tasks/search?q=${encodeURIComponent('7 days')}`);
+    const data = await r.json();
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+
+    if (!data.tasks?.length) {
+      body.textContent = '✓ No tasks due in the next 7 days.';
+      return;
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const PRIORITY  = { 4: '', 3: '·', 2: '!', 1: '!!' };
+    const DAYS      = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    // Group by due date
+    const byDate = {};
+    const noDue  = [];
+    data.tasks.forEach(t => {
+      const d = t.due?.date || null;
+      if (d) { if (!byDate[d]) byDate[d] = []; byDate[d].push(t); }
+      else noDue.push(t);
+    });
+
+    const container = document.createElement('div');
+    container.style.cssText = 'display:flex;flex-direction:column;gap:16px';
+
+    const makeTaskRow = t => {
+      const item = document.createElement('div');
+      item.className = 'task-item';
+      const pri = document.createElement('span');
+      pri.className = 'task-priority';
+      pri.textContent = PRIORITY[t.priority] ?? '';
+      if (t.priority === 1) pri.style.color = '#e05f5f';
+      else if (t.priority === 2) pri.style.color = 'var(--amber)';
+      else if (t.priority === 3) pri.style.color = 'var(--teal)';
+      const contentWrap = document.createElement('span');
+      contentWrap.className = 'task-content';
+      const content = document.createElement('span');
+      content.textContent = t.content;
+      contentWrap.appendChild(content);
+      if (t.project && t.project !== 'Inbox') {
+        const proj = document.createElement('span');
+        proj.className = 'task-project';
+        proj.textContent = t.project;
+        contentWrap.appendChild(proj);
+      }
+      const doneBtn = document.createElement('button');
+      doneBtn.type = 'button';
+      doneBtn.className = 'task-done-btn';
+      doneBtn.textContent = '✓';
+      doneBtn.title = 'Mark complete';
+      doneBtn.addEventListener('click', async () => {
+        item.classList.add('done');
+        doneBtn.disabled = true;
+        doneBtn.textContent = '✓ done';
+        try {
+          const res = await fetch(`/api/tasks/${t.id}/close`, { method: 'POST' });
+          const result = await res.json();
+          if (!result.ok) { item.classList.remove('done'); doneBtn.disabled = false; doneBtn.textContent = '✓'; }
+          else loadStatus();
+        } catch { item.classList.remove('done'); doneBtn.disabled = false; doneBtn.textContent = '✓'; }
+      });
+      item.append(pri, contentWrap, doneBtn);
+      return item;
+    };
+
+    Object.keys(byDate).sort().forEach(date => {
+      const tasks = byDate[date];
+      const isToday = date === todayStr;
+      const d = new Date(date + 'T00:00:00');
+      const label = isToday
+        ? `Today · ${DAYS[d.getDay()]} ${date.slice(5)}`
+        : `${DAYS[d.getDay()]} ${date.slice(5)}`;
+
+      const sec = document.createElement('div');
+      const hdr = document.createElement('div');
+      hdr.style.cssText =
+        `font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;` +
+        `color:${isToday ? 'var(--amber)' : 'var(--text-faint)'};margin-bottom:6px`;
+      hdr.textContent = `${label} · ${tasks.length}`;
+      const list = document.createElement('div');
+      list.className = 'task-list';
+      tasks.forEach(t => list.appendChild(makeTaskRow(t)));
+      sec.append(hdr, list);
+      container.appendChild(sec);
+    });
+
+    if (noDue.length) {
+      const sec = document.createElement('div');
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px';
+      hdr.textContent = `No due date · ${noDue.length}`;
+      const list = document.createElement('div');
+      list.className = 'task-list';
+      noDue.forEach(t => list.appendChild(makeTaskRow(t)));
+      sec.append(hdr, list);
+      container.appendChild(sec);
+    }
+
+    body.appendChild(container);
+  } catch (err) {
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    body.textContent = `Failed to fetch weekly tasks: ${err.message}`;
+  } finally {
+    askBtn.disabled = false;
+    filterInput.focus();
+  }
+}
+
+/* ---- /sessions — completed focus session history ---- */
+async function handleSessions() {
+  const card = makeCard('/sessions', '◎ Sessions', true);
+  card.classList.remove('loading');
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.className = 'exchange-body';
+
+  let sessions = [];
+  try { sessions = JSON.parse(localStorage.getItem(SESSIONS_LS) || '[]'); } catch {}
+
+  if (!sessions.length) {
+    body.textContent = 'No completed focus sessions yet — run /focus to start one.';
+    return;
+  }
+
+  // Group sessions by calendar date
+  const byDate = {};
+  sessions.forEach(s => {
+    const date = (s.completedAt || '').slice(0, 10);
+    if (!byDate[date]) byDate[date] = [];
+    byDate[date].push(s);
+  });
+
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const container = document.createElement('div');
+  container.style.cssText = 'display:flex;flex-direction:column;gap:12px';
+
+  Object.keys(byDate).slice(0, 14).forEach(date => {
+    const list  = byDate[date];
+    const total = list.reduce((a, s) => a + (s.duration || 25), 0);
+    const d     = new Date(date + 'T00:00:00');
+    const label = `${DAYS[d.getDay()]} ${date.slice(5)}`;
+
+    const sec = document.createElement('div');
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--text-faint);margin-bottom:5px;letter-spacing:.06em';
+    hdr.textContent = `${label} · ${list.length} session${list.length === 1 ? '' : 's'} · ${total} min`;
+
+    const dots = document.createElement('div');
+    dots.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px';
+    list.forEach(s => {
+      const dot = document.createElement('span');
+      dot.style.cssText =
+        'font-family:var(--mono);font-size:11px;color:var(--amber-dim);' +
+        'background:var(--bg-soft);border:1px solid var(--line);border-radius:4px;' +
+        'padding:2px 8px;cursor:default;transition:color .1s,border-color .1s';
+      dot.textContent = `◎ ${s.duration || 25}m`;
+      const t = new Date(s.completedAt);
+      dot.title = `Completed ${t.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+      dot.addEventListener('mouseenter', () => { dot.style.color = 'var(--amber)'; dot.style.borderColor = 'var(--amber-dim)'; });
+      dot.addEventListener('mouseleave', () => { dot.style.color = 'var(--amber-dim)'; dot.style.borderColor = 'var(--line)'; });
+      dots.appendChild(dot);
+    });
+
+    sec.append(hdr, dots);
+    container.appendChild(sec);
+  });
+
+  // Overall summary
+  const totalSessions = sessions.length;
+  const totalMins     = sessions.reduce((a, s) => a + (s.duration || 25), 0);
+  const summary = document.createElement('div');
+  summary.style.cssText =
+    'font-family:var(--mono);font-size:10px;color:var(--text-faint);' +
+    'margin-top:8px;padding-top:8px;border-top:1px solid var(--line)';
+  summary.textContent =
+    `${totalSessions} total · ${totalMins} min · ${(totalMins / 60).toFixed(1)} h focused`;
+  container.appendChild(summary);
+
+  body.appendChild(container);
+
+  const foot = document.getElementById(`ex-${n}-foot`);
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'followup-btn';
+  clearBtn.textContent = '✕ clear history';
+  clearBtn.addEventListener('click', () => {
+    try { localStorage.removeItem(SESSIONS_LS); } catch {}
+    body.innerHTML = '';
+    body.textContent = 'Session history cleared.';
+    clearBtn.remove();
+  });
+  foot.appendChild(clearBtn);
+}
+
 /* ---- keyboard help overlay ---- */
 const kbdHelp = document.getElementById('kbd-help');
 function toggleHelp(show) {
@@ -2979,6 +3203,12 @@ document.addEventListener('keydown', e => {
 
   // f — quick 25-min focus (fills command bar)
   if (e.key === 'f') { filterInput.value = '/focus '; filterInput.focus(); return; }
+
+  // s — quick standup (fills command bar)
+  if (e.key === 's') { filterInput.value = '/standup '; filterInput.focus(); return; }
+
+  // b — quick brief (auto-submit)
+  if (e.key === 'b') { filterInput.value = '/brief'; document.getElementById('cmd-form').requestSubmit(); return; }
 
   // 1-6 — select mode by position
   const idx = parseInt(e.key, 10) - 1;
@@ -3122,7 +3352,17 @@ const focusTimerEl    = document.getElementById('focus-timer');
 const focusClockEl    = document.getElementById('focus-clock');
 const focusPhaseEl    = document.getElementById('focus-phase');
 const focusStopEl     = document.getElementById('focus-stop');
-const focusTimerState = { intervalId: null, secondsLeft: 0, phase: 'idle' };
+const focusTimerState = { intervalId: null, secondsLeft: 0, phase: 'idle', totalSecs: 0 };
+
+/* ---- focus session persistence ---- */
+const SESSIONS_LS = 'jarvis_sessions';
+function saveFocusSession(durationMins) {
+  try {
+    const list = JSON.parse(localStorage.getItem(SESSIONS_LS) || '[]');
+    list.unshift({ completedAt: new Date().toISOString(), duration: durationMins });
+    localStorage.setItem(SESSIONS_LS, JSON.stringify(list.slice(0, 100)));
+  } catch {}
+}
 
 function _fmtTimer(secs) {
   const m = Math.floor(secs / 60);
@@ -3139,6 +3379,7 @@ function _tickFocusTimer() {
     focusTimerState.phase = 'idle';
     focusTimerEl.hidden = true;
     const isWork = phase === 'work';
+    if (isWork) saveFocusSession(Math.round(focusTimerState.totalSecs / 60));
     const msg = isWork
       ? 'Focus session complete! Time for a break.'
       : 'Break over. Ready to focus again?';
@@ -3162,6 +3403,7 @@ function _tickFocusTimer() {
 function startFocus(seconds, phase) {
   if (focusTimerState.intervalId) clearInterval(focusTimerState.intervalId);
   focusTimerState.secondsLeft = seconds;
+  focusTimerState.totalSecs   = seconds;
   focusTimerState.phase = phase;
   focusPhaseEl.textContent = phase === 'work' ? 'FOCUS' : 'BREAK';
   focusClockEl.textContent = _fmtTimer(seconds);
