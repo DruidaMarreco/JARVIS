@@ -419,6 +419,7 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/ctx</span><span class="kbd-desc">Preview context block</span></div>
       <div class="kbd-row"><span class="kbd-key">/prs</span><span class="kbd-desc">Open pull requests</span></div>
       <div class="kbd-row"><span class="kbd-key">/events</span><span class="kbd-desc">Recent GitHub activity</span></div>
+      <div class="kbd-row"><span class="kbd-key">/gh …</span><span class="kbd-desc">Search GitHub repositories</span></div>
       <div class="kbd-row"><span class="kbd-key">/todo …</span><span class="kbd-desc">Search all Todoist tasks</span></div>
       <div class="kbd-row"><span class="kbd-key">/models</span><span class="kbd-desc">Local Ollama models</span></div>
       <div class="kbd-row"><span class="kbd-key">/weather</span><span class="kbd-desc">Current weather</span></div>
@@ -876,6 +877,7 @@ const SLASH_CMDS = [
   { icon:'☁', name:'/weather', desc:'Current weather',             submit:true },
   { icon:'🔍', name:'/todo',    desc:'/todo <keyword>  search tasks', submit:false },
   { icon:'⟲',  name:'/recap',   desc:'Summarize this thread (Ollama)', submit:true },
+  { icon:'⑂',  name:'/gh',      desc:'/gh <query>  search GitHub repos', submit:false },
   { icon:'★',  name:'/starred', desc:'Browse starred exchanges',       submit:true },
   { icon:'🔍', name:'/find',    desc:'/find <keyword>  search thread', submit:false },
   { icon:'⊗',  name:'/clear',   desc:'Clear conversation thread',      submit:true },
@@ -1257,6 +1259,11 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
   else if (/^\/models\b/i.test(raw))  { await handleModelList(); }
   else if (/^\/weather\b/i.test(raw)) { await handleWeather(); }
   else if (/^\/recap\b/i.test(raw))   { await handleRecap(); }
+  else if (/^\/gh\b/i.test(raw)) {
+    const q = raw.replace(/^\/gh\s*/i, '').trim();
+    if (q) { await handleGithubSearch(q); }
+    else { filterInput.value = '/gh '; filterInput.focus(); }
+  }
   else if (/^\/starred\b/i.test(raw)) { await handleStarred(); }
   else if (/^\/find\b/i.test(raw)) {
     const q = raw.replace(/^\/find\s*/i, '').trim();
@@ -1994,6 +2001,77 @@ async function _streamOllama(card, query, model, history, modeLabel, opts = {}) 
   saveExchanges();
   askBtn.disabled = false;
   filterInput.focus();
+}
+
+/* ---- /gh — GitHub repository search ---- */
+async function handleGithubSearch(query) {
+  const card = makeCard(`/gh ${query}`, '⑂ GitHub', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+
+  const body = document.getElementById(`ex-${card.dataset.n}-body`);
+  body.className = 'exchange-body loading';
+  body.textContent = `Searching GitHub for "${query}"…`;
+
+  try {
+    const r = await fetch(`/api/github/search?q=${encodeURIComponent(query)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    body.className = 'exchange-body';
+
+    if (!data.repos?.length) {
+      body.textContent = `No GitHub repositories found for "${query}".`;
+      card.classList.remove('loading');
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'task-list';
+
+    data.repos.forEach(repo => {
+      const row = document.createElement('div');
+      row.className = 'task-item';
+      row.style.cssText = 'flex-direction:column;align-items:flex-start;gap:4px;padding:8px 0';
+
+      const top = document.createElement('div');
+      top.style.cssText = 'display:flex;width:100%;align-items:baseline;gap:8px;flex-wrap:wrap';
+
+      const link = document.createElement('a');
+      link.href = repo.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.style.cssText =
+        'color:var(--teal);font-family:var(--mono);font-size:12px;' +
+        'text-decoration:none;border-bottom:1px dotted var(--teal-dim)';
+      link.textContent = repo.full_name;
+
+      const meta = document.createElement('span');
+      meta.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--text-faint);margin-left:auto';
+      const parts = [];
+      if (repo.language) parts.push(repo.language);
+      if (repo.stars) parts.push(`★ ${repo.stars}`);
+      if (repo.updated) parts.push(repo.updated);
+      if (repo.private) parts.push('private');
+      meta.textContent = parts.join(' · ');
+
+      top.append(link, meta);
+
+      const desc = document.createElement('span');
+      desc.style.cssText = 'font-size:12px;color:var(--text-faint)';
+      desc.textContent = repo.description || '—';
+
+      row.append(top, desc);
+      list.appendChild(row);
+    });
+
+    body.appendChild(list);
+  } catch (err) {
+    body.className = 'exchange-body error';
+    body.textContent = `GitHub search failed: ${err.message}`;
+  }
+  card.classList.remove('loading');
 }
 
 /* ---- /find — client-side thread keyword search ---- */

@@ -616,6 +616,69 @@ class TestGithubRecentEvents:
 
 
 # ---------------------------------------------------------------------------
+# github — search_repos
+# ---------------------------------------------------------------------------
+
+
+class TestGithubSearchRepos:
+    def test_returns_repo_list(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        payload = {
+            "items": [
+                {
+                    "name": "JARVIS",
+                    "full_name": "testuser/JARVIS",
+                    "description": "Personal ops deck",
+                    "html_url": "https://github.com/testuser/JARVIS",
+                    "stargazers_count": 7,
+                    "updated_at": "2026-06-08T10:00:00Z",
+                    "language": "Python",
+                    "private": False,
+                }
+            ]
+        }
+        with _mock_get("github", return_value=_response(200, payload)):
+            result = asyncio.run(github.search_repos("JARVIS"))
+        assert len(result) == 1
+        assert result[0]["name"] == "JARVIS"
+        assert result[0]["stars"] == 7
+        assert result[0]["language"] == "Python"
+        assert result[0]["updated"] == "2026-06-08"
+
+    def test_empty_query_returns_empty_list(self):
+        result = asyncio.run(github.search_repos("   "))
+        assert result == []
+
+    def test_api_error_returns_empty_list(self):
+        with _mock_get("github", return_value=_response(422, {"message": "Validation Failed"})):
+            result = asyncio.run(github.search_repos("foo"))
+        assert result == []
+
+    def test_connection_error_returns_empty_list(self):
+        with _mock_get("github", side_effect=httpx.ConnectError("refused")):
+            result = asyncio.run(github.search_repos("test"))
+        assert result == []
+
+    def test_respects_limit(self, monkeypatch):
+        items = [
+            {
+                "name": f"repo{i}",
+                "full_name": f"u/repo{i}",
+                "description": "",
+                "html_url": f"https://github.com/u/repo{i}",
+                "stargazers_count": 0,
+                "updated_at": "2026-01-01T00:00:00Z",
+                "language": None,
+                "private": False,
+            }
+            for i in range(10)
+        ]
+        with _mock_get("github", return_value=_response(200, {"items": items})):
+            result = asyncio.run(github.search_repos("repo", limit=3))
+        assert len(result) == 3
+
+
+# ---------------------------------------------------------------------------
 # ollama
 # ---------------------------------------------------------------------------
 

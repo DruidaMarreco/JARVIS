@@ -645,6 +645,63 @@ class TestEventsRoute:
         assert {"type", "repo", "summary", "url", "date"} <= item.keys()
 
 
+class TestGithubSearchRoute:
+    def test_returns_repos(self):
+        repos = [
+            {
+                "name": "JARVIS",
+                "full_name": "u/JARVIS",
+                "description": "ops deck",
+                "url": "https://github.com/u/JARVIS",
+                "stars": 3,
+                "updated": "2026-06-08",
+                "language": "Python",
+                "private": False,
+            }
+        ]
+        with patch(
+            "backend.services.github.search_repos",
+            new_callable=AsyncMock,
+            return_value=repos,
+        ):
+            r = client.get("/api/github/search?q=JARVIS")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] == 1
+        assert data["repos"][0]["name"] == "JARVIS"
+
+    def test_missing_q_returns_422(self):
+        r = client.get("/api/github/search")
+        assert r.status_code == 422
+
+    def test_empty_results(self):
+        with patch("backend.services.github.search_repos", new_callable=AsyncMock, return_value=[]):
+            r = client.get("/api/github/search?q=nothing")
+        assert r.status_code == 200
+        assert r.json()["count"] == 0
+        assert r.json()["repos"] == []
+
+    def test_repo_shape_keys(self):
+        repo = {
+            "name": "x",
+            "full_name": "u/x",
+            "description": "",
+            "url": "https://github.com/u/x",
+            "stars": 0,
+            "updated": "2026-01-01",
+            "language": "",
+            "private": False,
+        }
+        with patch(
+            "backend.services.github.search_repos",
+            new_callable=AsyncMock,
+            return_value=[repo],
+        ):
+            r = client.get("/api/github/search?q=x")
+        item = r.json()["repos"][0]
+        assert {"name", "full_name", "description", "url", "stars", "updated"} <= item.keys()
+
+
 class TestContextRoute:
     def test_returns_context_string(self):
         ctx = "[Context · Sunday · 22°C, partly cloudy]\nNo Todoist tasks available."
