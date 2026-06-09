@@ -253,6 +253,12 @@ body::before{
   display:flex;align-items:center;gap:6px}
 .ollama-toggle:hover{border-color:var(--amber);color:var(--text)}
 .ollama-toggle.active{border-color:var(--amber);color:var(--amber);background:rgba(251,191,36,.08)}
+.model-select{font-family:var(--mono);font-size:11px;letter-spacing:.04em;cursor:pointer;
+  border:1px solid var(--amber-dim);background:var(--panel);color:var(--amber);
+  padding:5px 10px;border-radius:20px;outline:none;transition:border-color .12s,background .12s;
+  max-width:170px}
+.model-select:hover{border-color:var(--amber);background:var(--amber-glow)}
+.model-select:focus{border-color:var(--amber)}
 .mode-pill[disabled],.mode-pill.dimmed{opacity:.35;pointer-events:none}
 
 /* ---- groups ---- */
@@ -408,6 +414,9 @@ body::before{
     <span class="mode-label">mode</span>
     <button type="button" class="ctx-toggle active" id="ctx-toggle" title="Include today's tasks and time as context (c to toggle)">⊕ context</button>
     <button type="button" class="ollama-toggle" id="ollama-toggle" title="Use local Ollama AI instead of Hey Claude (requires Ollama running)">⊛ Ollama</button>
+    <select id="model-select" class="model-select" hidden aria-label="Ollama model">
+      <option value="">default</option>
+    </select>
   </div>
 
   <div class="cmd">
@@ -457,6 +466,8 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/gh …</span><span class="kbd-desc">Search GitHub repositories</span></div>
       <div class="kbd-row"><span class="kbd-key">/issues …</span><span class="kbd-desc">Search GitHub issues</span></div>
       <div class="kbd-row"><span class="kbd-key">/scratch</span><span class="kbd-desc">Persistent scratch-pad (auto-saved)</span></div>
+      <div class="kbd-row"><span class="kbd-key">/done …</span><span class="kbd-desc">Mark today's task done by keyword</span></div>
+      <div class="kbd-row"><span class="kbd-key">/history</span><span class="kbd-desc">Browse and re-run past queries</span></div>
       <div class="kbd-row"><span class="kbd-key">/todo …</span><span class="kbd-desc">Search all Todoist tasks</span></div>
       <div class="kbd-row"><span class="kbd-key">/models</span><span class="kbd-desc">Local Ollama models</span></div>
       <div class="kbd-row"><span class="kbd-key">/weather</span><span class="kbd-desc">Current weather</span></div>
@@ -659,7 +670,41 @@ ctxToggle.addEventListener('click', () => {
 });
 
 /* ---- Ollama provider toggle ---- */
-const ollamaToggle = document.getElementById('ollama-toggle');
+const ollamaToggle  = document.getElementById('ollama-toggle');
+const modelSelectEl = document.getElementById('model-select');
+
+async function populateModelSelect() {
+  try {
+    const r = await fetch('/api/ollama/models');
+    const data = await r.json();
+    const models = data.models || [];
+    modelSelectEl.innerHTML = '<option value="">default</option>';
+    models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.name;
+      opt.textContent = m.name;
+      if (m.name === ollamaModel) opt.selected = true;
+      modelSelectEl.appendChild(opt);
+    });
+    // Keep settings datalist in sync
+    const dl = document.getElementById('ollama-model-list');
+    if (dl) {
+      dl.innerHTML = '';
+      models.forEach(m => {
+        const o = document.createElement('option');
+        o.value = m.name;
+        dl.appendChild(o);
+      });
+    }
+  } catch {}
+}
+
+modelSelectEl.addEventListener('change', () => {
+  ollamaModel = modelSelectEl.value || 'default';
+  savePrefs({ ollamaModel });
+  applyProviderUI();
+});
+
 function applyProviderUI() {
   const usingOllama = provider === 'ollama';
   ollamaToggle.classList.toggle('active', usingOllama);
@@ -670,6 +715,9 @@ function applyProviderUI() {
     : 'Use local Ollama AI instead of Hey Claude (requires Ollama running)';
   // Dim Hey Claude mode pills when Ollama is active (they don't apply)
   document.querySelectorAll('.mode-pill').forEach(p => p.classList.toggle('dimmed', usingOllama));
+  // Show inline model selector only when Ollama is active
+  modelSelectEl.hidden = !usingOllama;
+  if (usingOllama) populateModelSelect();
 }
 applyProviderUI();
 ollamaToggle.addEventListener('click', () => {
@@ -928,6 +976,8 @@ const SLASH_CMDS = [
   { icon:'◎',  name:'/break',   desc:'/break [mins]  Break timer',     submit:false },
   { icon:'⑂',  name:'/issues',  desc:'/issues <query>  search GitHub issues', submit:false },
   { icon:'✎',  name:'/scratch', desc:'Persistent scratch-pad',          submit:true },
+  { icon:'✓',  name:'/done',    desc:'/done <keyword>  complete a task', submit:false },
+  { icon:'↺',  name:'/history', desc:'Browse past queries',             submit:true },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -1329,6 +1379,12 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
     await handleFind(q);
   }
   else if (/^\/clear\b/i.test(raw)) { document.getElementById('thread-clear').click(); }
+  else if (/^\/done\b/i.test(raw)) {
+    const kw = raw.replace(/^\/done\s*/i, '').trim();
+    if (kw) { await handleDone(kw); }
+    else { filterInput.value = '/done '; filterInput.focus(); }
+  }
+  else if (/^\/history\b/i.test(raw)) { await handleHistory(); }
   else if (/^\/issues\b/i.test(raw)) {
     const q = raw.replace(/^\/issues\s*/i, '').trim();
     if (q) { await handleGithubIssues(q); }
@@ -1877,6 +1933,103 @@ async function handleTodoSearch(query) {
   }
   askBtn.disabled = false;
   filterInput.focus();
+}
+
+/* ---- /done — mark today's task done by keyword ---- */
+async function handleDone(keyword) {
+  const card = makeCard(`/done ${keyword}`, '✓ Todoist', true);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.textContent = `Looking for "${keyword}"…`;
+  filterInput.value = '';
+
+  try {
+    const r = await fetch('/api/tasks');
+    const data = await r.json();
+    const kw = keyword.toLowerCase();
+    const match = (data.tasks || []).find(t => t.content.toLowerCase().includes(kw));
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    if (!match) {
+      body.textContent = `No today's task found matching "${keyword}".`;
+      return;
+    }
+    const res = await fetch(`/api/tasks/${match.id}/close`, { method: 'POST' });
+    if (res.ok) {
+      body.textContent = `✓ Done: "${match.content}"`;
+      loadStatus();
+    } else {
+      body.textContent = `Failed to close task (HTTP ${res.status}).`;
+    }
+  } catch (err) {
+    card.classList.remove('loading');
+    body.className = 'exchange-body';
+    body.textContent = `Error: ${err.message}`;
+  }
+}
+
+/* ---- /history — browse and re-run past queries ---- */
+async function handleHistory() {
+  const card = makeCard('/history', '↺ History', true);
+  card.classList.remove('loading');
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.className = 'exchange-body';
+  const hist = getQueryHistory();
+
+  if (!hist.length) {
+    body.textContent = 'No query history yet.';
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.style.cssText = 'display:flex;flex-direction:column;gap:3px';
+  hist.forEach(q => {
+    const row = document.createElement('div');
+    row.style.cssText =
+      'display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:4px;' +
+      'cursor:pointer;transition:background .08s';
+    row.addEventListener('mouseenter', () => { row.style.background = 'var(--panel-hi)'; });
+    row.addEventListener('mouseleave', () => { row.style.background = ''; });
+    const ico = document.createElement('span');
+    ico.style.cssText = 'font-family:var(--mono);font-size:11px;color:var(--text-faint);flex-shrink:0';
+    ico.textContent = '↺';
+    const txt = document.createElement('span');
+    txt.style.cssText =
+      'font-family:var(--mono);font-size:11px;color:var(--text-dim);flex:1;' +
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    txt.textContent = q;
+    row.title = q;
+    row.append(ico, txt);
+    row.addEventListener('click', () => {
+      filterInput.value = q;
+      filterInput.focus();
+      filterInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    list.appendChild(row);
+  });
+  body.appendChild(list);
+
+  const foot = document.getElementById(`ex-${n}-foot`);
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'followup-btn';
+  clearBtn.textContent = '✕ clear history';
+  clearBtn.addEventListener('click', () => {
+    try { localStorage.removeItem(QUERY_HISTORY_LS); } catch {}
+    list.innerHTML = '';
+    body.textContent = 'History cleared.';
+    clearBtn.remove();
+  });
+  foot.appendChild(clearBtn);
 }
 
 async function handleDispatch(query) {
@@ -2580,6 +2733,9 @@ function applySettingsSave() {
   if (model) {
     ollamaModel = model;
     savePrefs({ ollamaModel: model });
+    // Sync inline selector if it's visible
+    const opt = modelSelectEl.querySelector(`option[value="${CSS.escape(model)}"]`);
+    if (opt) opt.selected = true;
   }
 
   closeSettings();
