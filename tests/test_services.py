@@ -620,6 +620,59 @@ class TestGithubRecentEvents:
 # ---------------------------------------------------------------------------
 
 
+class TestGithubMyRepos:
+    def test_returns_repo_list(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        payload = [
+            {
+                "name": "JARVIS",
+                "full_name": "testuser/JARVIS",
+                "description": "Personal ops deck",
+                "html_url": "https://github.com/testuser/JARVIS",
+                "stargazers_count": 2,
+                "language": "Python",
+                "pushed_at": "2026-06-09T10:00:00Z",
+                "private": False,
+            }
+        ]
+        with _mock_get("github", return_value=_response(200, payload)):
+            result = asyncio.run(github.my_repos())
+        assert len(result) == 1
+        assert result[0]["name"] == "JARVIS"
+        assert result[0]["language"] == "Python"
+        assert result[0]["pushed"] == "2026-06-09"
+
+    def test_empty_username_returns_empty_list(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "")
+        result = asyncio.run(github.my_repos())
+        assert result == []
+
+    def test_api_error_returns_empty_list(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        with _mock_get("github", return_value=_response(403, {"message": "Forbidden"})):
+            result = asyncio.run(github.my_repos())
+        assert result == []
+
+    def test_respects_limit(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_USERNAME", "testuser")
+        payload = [
+            {
+                "name": f"repo{i}",
+                "full_name": f"u/repo{i}",
+                "description": "",
+                "html_url": f"https://github.com/u/repo{i}",
+                "stargazers_count": 0,
+                "language": None,
+                "pushed_at": "2026-01-01T00:00:00Z",
+                "private": False,
+            }
+            for i in range(10)
+        ]
+        with _mock_get("github", return_value=_response(200, payload)):
+            result = asyncio.run(github.my_repos(limit=3))
+        assert len(result) == 3
+
+
 class TestGithubSearchRepos:
     def test_returns_repo_list(self, monkeypatch):
         monkeypatch.setenv("GITHUB_USERNAME", "testuser")

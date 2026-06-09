@@ -289,6 +289,8 @@ body::before{
   padding:2px;line-height:1;z-index:1}
 .tile:hover .tile-pin{opacity:.6}
 .tile-pin:hover,.tile-pin.pinned{opacity:1;color:var(--amber)}
+.tile-meta{font-family:var(--mono);font-size:9px;color:var(--text-faint);margin-top:5px;
+  letter-spacing:.03em;line-height:1.4}
 
 .empty{font-family:var(--mono);font-size:12px;color:var(--text-faint);text-align:center;padding:40px;display:none}
 
@@ -468,6 +470,7 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/scratch</span><span class="kbd-desc">Persistent scratch-pad (auto-saved)</span></div>
       <div class="kbd-row"><span class="kbd-key">/done …</span><span class="kbd-desc">Mark today's task done by keyword</span></div>
       <div class="kbd-row"><span class="kbd-key">/history</span><span class="kbd-desc">Browse and re-run past queries</span></div>
+      <div class="kbd-row"><span class="kbd-key">/open …</span><span class="kbd-desc">Open a bookmark or app by name</span></div>
       <div class="kbd-row"><span class="kbd-key">/todo …</span><span class="kbd-desc">Search all Todoist tasks</span></div>
       <div class="kbd-row"><span class="kbd-key">/models</span><span class="kbd-desc">Local Ollama models</span></div>
       <div class="kbd-row"><span class="kbd-key">/weather</span><span class="kbd-desc">Current weather</span></div>
@@ -515,6 +518,14 @@ body::before{
         <label class="settings-label">Ollama system prompt</label>
         <textarea class="settings-input settings-textarea" id="set-system-prompt" placeholder="Be concise and technical. Answer in plain text unless code is required." rows="3"></textarea>
         <span class="settings-hint">Prepended to every Ollama conversation as a system role instruction. Leave blank for no system prompt.</span>
+      </div>
+
+      <div class="settings-group">
+        <label class="settings-label">Quick links</label>
+        <textarea class="settings-input settings-textarea" id="set-bookmarks"
+          placeholder="JARVIS Dev http://localhost:5173&#10;Vercel https://vercel.com/dashboard&#10;Local API http://localhost:8000/docs"
+          rows="4"></textarea>
+        <span class="settings-hint">One link per line: Name URL — renders as tiles on the board and reachable via /open</span>
       </div>
 
       <div class="settings-actions">
@@ -572,6 +583,20 @@ const APPS = [
 ];
 
 const ORDER = ["Command","Daily Ops","Knowledge & Files","Health & Fitness","Build","Comms","Media"];
+
+/* ---- bookmark helpers ---- */
+function parseBookmarks(text) {
+  return (text || '').split('\n')
+    .map(l => l.trim()).filter(Boolean)
+    .map(l => {
+      const m = l.match(/^(.+?)\s+(https?:\/\/\S+)\s*$/)
+             || l.match(/^(.+?)\|(https?:\/\/.+)$/);
+      if (m) return { name: m[1].trim(), url: m[2].trim() };
+      if (/^https?:\/\/\S+$/.test(l)) return { name: l, url: l };
+      return null;
+    })
+    .filter(Boolean);
+}
 
 /* ---- preferences (persisted across sessions) ---- */
 const PREFS_KEY = 'jarvis_prefs';
@@ -861,6 +886,40 @@ function render(filter = '') {
     }
   }
 
+  // Quick Links (user bookmarks from settings) — shown before APPS groups
+  const bookmarks = parseBookmarks(loadSettings().bookmarks || '');
+  const filteredBms = bookmarks.filter(b =>
+    !q || b.name.toLowerCase().includes(q) ||
+    ((() => { try { return new URL(b.url).hostname; } catch { return b.url; } })()).includes(q)
+  );
+  if (filteredBms.length) {
+    const bSec = document.createElement('section');
+    bSec.className = 'group';
+    bSec.innerHTML = `<div class="group-head"><span class="group-title">Quick Links</span>
+      <span class="group-line"></span><span class="group-count">${filteredBms.length}</span></div>`;
+    const bGrid = document.createElement('div');
+    bGrid.className = 'grid';
+    filteredBms.forEach(b => {
+      shown++;
+      const tile = document.createElement('a');
+      tile.className = 'tile';
+      tile.href = b.url;
+      tile.target = '_blank';
+      tile.rel = 'noopener';
+      tile.style.animationDelay = (delay++ * 0.03) + 's';
+      const host = (() => {
+        try { return new URL(b.url).hostname.replace('www.', ''); } catch { return ''; }
+      })();
+      tile.innerHTML = `<span class="tile-arrow" aria-hidden="true">↗</span>
+        <span class="tile-ico" aria-hidden="true">⊛</span>
+        <span class="tile-name">${q ? highlight(b.name, filter) : esc(b.name)}</span>
+        <span class="tile-desc">${esc(host || b.url)}</span>`;
+      bGrid.appendChild(tile);
+    });
+    bSec.appendChild(bGrid);
+    board.appendChild(bSec);
+  }
+
   ORDER.forEach(g => {
     const items = APPS.filter(a => a.group === g &&
       (a.name.toLowerCase().includes(q) || a.desc.toLowerCase().includes(q) || g.toLowerCase().includes(q)));
@@ -876,6 +935,8 @@ function render(filter = '') {
     board.appendChild(sec);
   });
   document.getElementById('empty').style.display = shown ? 'none' : 'block';
+  // Projects section re-rendered if not filtering
+  if (!q) loadAndRenderProjects();
 }
 render();
 
@@ -976,8 +1037,9 @@ const SLASH_CMDS = [
   { icon:'◎',  name:'/break',   desc:'/break [mins]  Break timer',     submit:false },
   { icon:'⑂',  name:'/issues',  desc:'/issues <query>  search GitHub issues', submit:false },
   { icon:'✎',  name:'/scratch', desc:'Persistent scratch-pad',          submit:true },
-  { icon:'✓',  name:'/done',    desc:'/done <keyword>  complete a task', submit:false },
-  { icon:'↺',  name:'/history', desc:'Browse past queries',             submit:true },
+  { icon:'✓',  name:'/done',    desc:'/done <keyword>  complete a task',  submit:false },
+  { icon:'↺',  name:'/history', desc:'Browse past queries',              submit:true },
+  { icon:'↗',  name:'/open',    desc:'/open <name>  open bookmark or app', submit:false },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -1379,6 +1441,11 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
     await handleFind(q);
   }
   else if (/^\/clear\b/i.test(raw)) { document.getElementById('thread-clear').click(); }
+  else if (/^\/open\b/i.test(raw)) {
+    const name = raw.replace(/^\/open\s*/i, '').trim();
+    if (name) { handleOpen(name); }
+    else { filterInput.value = '/open '; filterInput.focus(); }
+  }
   else if (/^\/done\b/i.test(raw)) {
     const kw = raw.replace(/^\/done\s*/i, '').trim();
     if (kw) { await handleDone(kw); }
@@ -2242,6 +2309,84 @@ async function _streamOllama(card, query, model, history, modeLabel, opts = {}) 
 }
 
 /* ---- /gh — GitHub repository search ---- */
+/* ---- Projects board section (GitHub repos) ---- */
+let _projectsCache = null;   // { repos, ts }
+const _PROJECTS_TTL = 300_000; // 5 min
+
+async function loadAndRenderProjects() {
+  const now = Date.now();
+  // Use cache if fresh, otherwise fetch
+  if (!_projectsCache || now - _projectsCache.ts > _PROJECTS_TTL) {
+    try {
+      const r = await fetch('/api/github/repos?limit=8');
+      if (r.ok) {
+        const data = await r.json();
+        _projectsCache = { repos: data.repos || [], ts: now };
+      }
+    } catch {}
+  }
+  if (!_projectsCache?.repos?.length) return;
+
+  // Remove stale section if it exists (from previous render())
+  document.getElementById('section-projects')?.remove();
+  if (filterInput.value.trim()) return; // don't show while filtering
+
+  const repos = _projectsCache.repos;
+  const sec = document.createElement('section');
+  sec.className = 'group';
+  sec.id = 'section-projects';
+  sec.innerHTML = `<div class="group-head">
+    <span class="group-title">Projects</span>
+    <span class="group-line"></span>
+    <span class="group-count">${repos.length} repos</span>
+  </div>`;
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  repos.forEach((repo, i) => {
+    const tile = document.createElement('a');
+    tile.className = 'tile';
+    tile.href = repo.url;
+    tile.target = '_blank';
+    tile.rel = 'noopener';
+    tile.setAttribute('aria-label', `${repo.name} — ${repo.description || 'GitHub repo'}`);
+    tile.style.animationDelay = (i * 0.03) + 's';
+    const langStr = repo.language ? `◉ ${esc(repo.language)} · ` : '';
+    const pushed = repo.pushed ? repo.pushed.slice(5) : '';
+    tile.innerHTML = `<span class="tile-arrow" aria-hidden="true">↗</span>
+      <span class="tile-ico" aria-hidden="true">⌬</span>
+      <span class="tile-name">${esc(repo.name)}</span>
+      <span class="tile-desc">${esc(repo.description || '—')}</span>
+      <span class="tile-meta">${langStr}pushed ${pushed}</span>`;
+    grid.appendChild(tile);
+  });
+  sec.appendChild(grid);
+  board.appendChild(sec);
+}
+
+/* ---- /open — open bookmark or app by name ---- */
+function handleOpen(name) {
+  const q = name.toLowerCase();
+  // Check bookmarks first
+  const bookmarks = parseBookmarks(loadSettings().bookmarks || '');
+  const bm = bookmarks.find(b => b.name.toLowerCase().includes(q));
+  if (bm) { window.open(bm.url, '_blank', 'noopener'); filterInput.value = ''; return; }
+  // Check APPS
+  const app = APPS.find(a => a.url !== '#' && a.name.toLowerCase().includes(q));
+  if (app) { window.open(app.url, '_blank', 'noopener'); filterInput.value = ''; return; }
+  // Check cached GitHub repos
+  const repo = (_projectsCache?.repos || []).find(r => r.name.toLowerCase().includes(q));
+  if (repo) { window.open(repo.url, '_blank', 'noopener'); filterInput.value = ''; return; }
+  // Nothing found — show a card
+  const card = makeCard(`/open ${name}`, '↗ Open', true);
+  card.classList.remove('loading');
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  const body = document.getElementById(`ex-${card.dataset.n}-body`);
+  body.className = 'exchange-body';
+  body.textContent = `No bookmark, app, or project found matching "${name}".`;
+  filterInput.value = '';
+}
+
 async function handleGithubSearch(query) {
   const card = makeCard(`/gh ${query}`, '⑂ GitHub', false);
   threadList.appendChild(card);
@@ -2687,6 +2832,7 @@ function openSettings() {
   document.getElementById('set-lon').value           = s.weatherLon || '';
   document.getElementById('set-model').value         = s.ollamaModel || (ollamaModel !== 'default' ? ollamaModel : '');
   document.getElementById('set-system-prompt').value = s.systemPrompt || '';
+  document.getElementById('set-bookmarks').value     = s.bookmarks || '';
   settingsOverlay.classList.add('visible');
   document.getElementById('set-name').focus();
 
@@ -2713,6 +2859,7 @@ function applySettingsSave() {
   const lon          = document.getElementById('set-lon').value.trim();
   const model        = document.getElementById('set-model').value.trim();
   const systemPrompt = document.getElementById('set-system-prompt').value.trim();
+  const bookmarks    = document.getElementById('set-bookmarks').value;
 
   // Display name
   if (name) {
@@ -2721,13 +2868,15 @@ function applySettingsSave() {
     tick(); // update greeting
   }
 
-  // Weather location + Ollama system prompt — persist for later use
+  // Weather location + Ollama system prompt + bookmarks — persist for later use
   saveSettings({
     weatherLat:   lat || null,
     weatherLon:   lon || null,
     ollamaModel:  model || null,
     systemPrompt: systemPrompt || null,
+    bookmarks:    bookmarks || null,
   });
+  render(''); // re-render board so Quick Links appear immediately
 
   // Ollama model preference
   if (model) {

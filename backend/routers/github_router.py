@@ -21,6 +21,15 @@ async def get_recent_events() -> dict:
     return {"events": events, "count": len(events)}
 
 
+@router.get("/github/repos")
+async def get_my_repos(
+    limit: int = Query(default=8, ge=1, le=20),
+) -> dict:
+    """Return the configured user's own GitHub repositories."""
+    repos = await github.my_repos(limit=limit)
+    return {"repos": repos, "count": len(repos)}
+
+
 @router.get("/github/issues")
 async def search_github_issues(
     q: str = Query(description="GitHub issue search query"),

@@ -645,6 +645,57 @@ class TestEventsRoute:
         assert {"type", "repo", "summary", "url", "date"} <= item.keys()
 
 
+class TestGithubMyReposRoute:
+    def test_returns_repos(self):
+        repos = [
+            {
+                "name": "JARVIS",
+                "full_name": "u/JARVIS",
+                "description": "ops deck",
+                "url": "https://github.com/u/JARVIS",
+                "stars": 2,
+                "language": "Python",
+                "pushed": "2026-06-09",
+                "private": False,
+            }
+        ]
+        with patch(
+            "backend.services.github.my_repos",
+            new_callable=AsyncMock,
+            return_value=repos,
+        ):
+            r = client.get("/api/github/repos")
+        assert r.status_code == 200
+        assert r.json()["count"] == 1
+        assert r.json()["repos"][0]["name"] == "JARVIS"
+
+    def test_empty_repos(self):
+        with patch("backend.services.github.my_repos", new_callable=AsyncMock, return_value=[]):
+            r = client.get("/api/github/repos")
+        assert r.status_code == 200
+        assert r.json()["count"] == 0
+
+    def test_repo_shape_keys(self):
+        repo = {
+            "name": "x",
+            "full_name": "u/x",
+            "description": "",
+            "url": "https://github.com/u/x",
+            "stars": 0,
+            "language": "",
+            "pushed": "2026-01-01",
+            "private": False,
+        }
+        with patch(
+            "backend.services.github.my_repos",
+            new_callable=AsyncMock,
+            return_value=[repo],
+        ):
+            r = client.get("/api/github/repos")
+        item = r.json()["repos"][0]
+        assert {"name", "full_name", "url", "stars", "language", "pushed"} <= item.keys()
+
+
 class TestGithubSearchRoute:
     def test_returns_repos(self):
         repos = [
