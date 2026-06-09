@@ -114,6 +114,53 @@ async def search_repos(query: str, limit: int = 6) -> list[dict]:
         return []
 
 
+async def search_issues(query: str, limit: int = 8) -> list[dict]:
+    """Search GitHub issues matching query, most recently updated first.
+
+    Each item: {number, title, repo, url, state, updated, comments}.
+    Returns an empty list on any failure.
+    """
+    if not query.strip():
+        return []
+    headers = {**_HEADERS}
+    token = os.getenv("GITHUB_TOKEN", "")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.get(
+                f"{_API}/search/issues",
+                headers=headers,
+                params={
+                    "q": f"{query} is:issue",
+                    "per_page": min(limit, 20),
+                    "sort": "updated",
+                    "order": "desc",
+                },
+            )
+            r.raise_for_status()
+            items = r.json().get("items", [])
+            result = []
+            for item in items[:limit]:
+                repo_url = item.get("repository_url", "")
+                repo = repo_url.rsplit("/", 1)[-1] if repo_url else "?"
+                result.append(
+                    {
+                        "number": item.get("number"),
+                        "title": item.get("title", ""),
+                        "repo": repo,
+                        "url": item.get("html_url", ""),
+                        "state": item.get("state", ""),
+                        "updated": (item.get("updated_at") or "")[:10],
+                        "comments": item.get("comments", 0),
+                    }
+                )
+            return result
+    except Exception as exc:
+        _log.warning("github.search_issues() failed: %s", exc)
+        return []
+
+
 async def recent_activity(limit: int = 3) -> list[str]:
     """Return a compact list of recent GitHub activity strings (push/PR events).
 

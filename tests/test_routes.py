@@ -702,6 +702,65 @@ class TestGithubSearchRoute:
         assert {"name", "full_name", "description", "url", "stars", "updated"} <= item.keys()
 
 
+class TestGithubIssuesRoute:
+    def test_returns_issues(self):
+        issues = [
+            {
+                "number": 1,
+                "title": "Bug",
+                "repo": "JARVIS",
+                "url": "https://github.com/u/JARVIS/issues/1",
+                "state": "open",
+                "updated": "2026-06-01",
+                "comments": 2,
+            }
+        ]
+        with patch(
+            "backend.services.github.search_issues",
+            new_callable=AsyncMock,
+            return_value=issues,
+        ):
+            r = client.get("/api/github/issues?q=bug")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] == 1
+        assert data["issues"][0]["number"] == 1
+
+    def test_missing_q_returns_422(self):
+        r = client.get("/api/github/issues")
+        assert r.status_code == 422
+
+    def test_empty_results(self):
+        with patch(
+            "backend.services.github.search_issues",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            r = client.get("/api/github/issues?q=nothing")
+        assert r.status_code == 200
+        assert r.json()["count"] == 0
+        assert r.json()["issues"] == []
+
+    def test_issue_shape_keys(self):
+        issue = {
+            "number": 1,
+            "title": "Test",
+            "repo": "x",
+            "url": "https://github.com/u/x/issues/1",
+            "state": "open",
+            "updated": "2026-01-01",
+            "comments": 0,
+        }
+        with patch(
+            "backend.services.github.search_issues",
+            new_callable=AsyncMock,
+            return_value=[issue],
+        ):
+            r = client.get("/api/github/issues?q=test")
+        item = r.json()["issues"][0]
+        assert {"number", "title", "repo", "url", "state", "updated", "comments"} <= item.keys()
+
+
 class TestContextRoute:
     def test_returns_context_string(self):
         ctx = "[Context · Sunday · 22°C, partly cloudy]\nNo Todoist tasks available."

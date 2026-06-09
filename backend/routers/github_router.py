@@ -21,6 +21,16 @@ async def get_recent_events() -> dict:
     return {"events": events, "count": len(events)}
 
 
+@router.get("/github/issues")
+async def search_github_issues(
+    q: str = Query(description="GitHub issue search query"),
+    limit: int = Query(default=8, ge=1, le=20),
+) -> dict:
+    """Search GitHub issues matching the given query string."""
+    issues = await github.search_issues(q, limit=limit)
+    return {"issues": issues, "query": q, "count": len(issues)}
+
+
 @router.get("/github/search")
 async def search_github(
     q: str = Query(description="GitHub repository search query"),
