@@ -489,6 +489,8 @@ body::before{
       <div class="kbd-row"><span class="kbd-key">/remind N msg</span><span class="kbd-desc">Browser notification reminder</span></div>
       <div class="kbd-row"><span class="kbd-key">/week</span><span class="kbd-desc">This week's tasks grouped by day</span></div>
       <div class="kbd-row"><span class="kbd-key">/sessions</span><span class="kbd-desc">Completed focus session history</span></div>
+      <div class="kbd-row"><span class="kbd-key">/today</span><span class="kbd-desc">Today's snapshot: tasks, PRs, weather</span></div>
+      <div class="kbd-row"><span class="kbd-key">/countdown [add|rm]</span><span class="kbd-desc">Countdown board — track future dates</span></div>
       <div class="kbd-row" style="margin-top:12px;border-top:1px solid var(--line-hi);padding-top:12px">
         <span class="kbd-key">s</span><span class="kbd-desc">Fill /standup in command bar</span></div>
       <div class="kbd-row"><span class="kbd-key">b</span><span class="kbd-desc">Run /brief immediately</span></div>
@@ -894,6 +896,36 @@ function render(filter = '') {
     }
   }
 
+  // Countdown board — only when not filtering
+  if (!q) {
+    const countdowns = loadCountdowns().sort((a, b) => a.date.localeCompare(b.date));
+    if (countdowns.length) {
+      const cdSec = document.createElement('section');
+      cdSec.className = 'group';
+      cdSec.innerHTML = `<div class="group-head"><span class="group-title">Countdowns</span>
+        <span class="group-line"></span><span class="group-count">${countdowns.length}</span></div>`;
+      const cdGrid = document.createElement('div');
+      cdGrid.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;padding:2px 0';
+      countdowns.forEach(cd => {
+        const days = _daysUntil(cd.date);
+        const color = days < 0 ? 'var(--text-faint)' : days <= 3 ? 'var(--amber)' : days <= 14 ? '#e0a54f99' : 'var(--teal)';
+        const label = days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'today' : `${days}d`;
+        const tile = document.createElement('div');
+        tile.style.cssText =
+          'font-family:var(--mono);font-size:12px;border:1px solid var(--line-hi);' +
+          'background:var(--panel);border-radius:6px;padding:8px 14px;cursor:default;' +
+          `color:${color};display:flex;flex-direction:column;gap:2px;min-width:90px`;
+        tile.title = `${cd.date} · /countdown rm ${cd.label}`;
+        tile.innerHTML =
+          `<span style="font-size:16px;font-weight:600;letter-spacing:-.01em">${label}</span>` +
+          `<span style="font-size:10px;color:var(--text-dim);letter-spacing:.04em">${esc(cd.label)}</span>`;
+        cdGrid.appendChild(tile);
+      });
+      cdSec.appendChild(cdGrid);
+      board.appendChild(cdSec);
+    }
+  }
+
   // Quick Links (user bookmarks from settings) — shown before APPS groups
   const bookmarks = parseBookmarks(loadSettings().bookmarks || '');
   const filteredBms = bookmarks.filter(b =>
@@ -1051,8 +1083,10 @@ const SLASH_CMDS = [
   { icon:'⊛',  name:'/standup',  desc:'AI-generated daily standup',          submit:true  },
   { icon:'◉',  name:'/ping',     desc:'Service health & latency check',      submit:true  },
   { icon:'⏰', name:'/remind',   desc:'/remind <mins> <message>',            submit:false },
-  { icon:'▦',  name:'/week',     desc:'This week\'s tasks by day',           submit:true  },
+  { icon:'▦',  name:'/week',      desc:'This week\'s tasks by day',           submit:true  },
   { icon:'◎',  name:'/sessions', desc:'Completed focus session history',     submit:true  },
+  { icon:'◈',  name:'/today',    desc:'Today\'s snapshot: tasks, PRs, weather', submit:true },
+  { icon:'⧗',  name:'/countdown', desc:'/countdown add YYYY-MM-DD label',   submit:false },
 ];
 
 /* ---- recent tasks (stored per-session in localStorage) ---- */
@@ -1471,10 +1505,15 @@ document.getElementById('cmd-form').addEventListener('submit', async e => {
     else { filterInput.value = '/issues '; filterInput.focus(); }
   }
   else if (/^\/scratch\b/i.test(raw)) { await handleScratch(); }
-  else if (/^\/standup\b/i.test(raw))  { await handleStandup(); }
-  else if (/^\/ping\b/i.test(raw))     { await handlePing(); }
-  else if (/^\/week\b/i.test(raw))     { await handleWeek(); }
-  else if (/^\/sessions\b/i.test(raw)) { await handleSessions(); }
+  else if (/^\/standup\b/i.test(raw))   { await handleStandup(); }
+  else if (/^\/ping\b/i.test(raw))      { await handlePing(); }
+  else if (/^\/week\b/i.test(raw))      { await handleWeek(); }
+  else if (/^\/sessions\b/i.test(raw))  { await handleSessions(); }
+  else if (/^\/today\b/i.test(raw))     { await handleToday(); }
+  else if (/^\/countdown\b/i.test(raw)) {
+    const arg = raw.replace(/^\/countdown\s*/i, '').trim();
+    await handleCountdown(arg);
+  }
   else if (/^\/remind\b/i.test(raw)) {
     const arg = raw.replace(/^\/remind\s*/i, '').trim();
     await handleRemind(arg);
@@ -3153,6 +3192,214 @@ async function handleSessions() {
   foot.appendChild(clearBtn);
 }
 
+/* ---- /today — aggregated daily snapshot ---- */
+async function handleToday() {
+  const card = makeCard('/today', '◈ Today', false);
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.className = 'exchange-body';
+
+  let data;
+  try {
+    const loc = loadSettings().location || '';
+    const params = new URLSearchParams();
+    if (loc) {
+      const [lat, lon] = loc.split(',').map(s => s.trim());
+      if (lat) params.set('lat', lat);
+      if (lon) params.set('lon', lon);
+    }
+    const qs = params.toString() ? '?' + params.toString() : '';
+    const r = await fetch(`/api/today${qs}`);
+    data = await r.json();
+  } catch (err) {
+    card.classList.remove('loading');
+    body.textContent = `Error: ${err.message}`;
+    return;
+  }
+
+  card.classList.remove('loading');
+
+  const container = document.createElement('div');
+  container.style.cssText = 'display:flex;flex-direction:column;gap:10px';
+
+  function _todayRow(icon, label, value) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:baseline;gap:8px;font-family:var(--mono);font-size:12px';
+    row.innerHTML =
+      `<span style="color:var(--text-faint);flex-shrink:0">${icon} ${label}</span>` +
+      `<span style="color:var(--text-dim);flex:1;text-align:right">${esc(String(value))}</span>`;
+    return row;
+  }
+
+  // Weather
+  if (data.weather) container.appendChild(_todayRow('☁', 'weather', data.weather));
+
+  // Tasks summary
+  const overLabel = data.overdue_count > 0 ? ` · ${data.overdue_count} overdue` : '';
+  container.appendChild(_todayRow('✓', 'tasks', `${data.task_count} today${overLabel}`));
+
+  // Task list (up to 8)
+  if (data.tasks && data.tasks.length) {
+    const tList = document.createElement('div');
+    tList.style.cssText = 'display:flex;flex-direction:column;gap:3px;padding-left:16px';
+    const PRIORITY_COLORS = { 4: 'var(--amber)', 3: '#e07050', 2: '#8888cc', 1: 'var(--text-faint)' };
+    data.tasks.slice(0, 8).forEach(t => {
+      const row = document.createElement('div');
+      row.style.cssText = 'font-family:var(--mono);font-size:11px;color:var(--text-dim);' +
+        'display:flex;align-items:center;gap:6px';
+      const dot = document.createElement('span');
+      dot.style.cssText = `width:6px;height:6px;border-radius:50%;flex-shrink:0;` +
+        `background:${PRIORITY_COLORS[t.priority] || 'var(--text-faint)'}`;
+      const lbl = document.createElement('span');
+      lbl.textContent = t.content;
+      lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1';
+      if (t.project) {
+        const proj = document.createElement('span');
+        proj.style.cssText = 'color:var(--text-faint);font-size:10px;flex-shrink:0';
+        proj.textContent = t.project;
+        row.append(dot, lbl, proj);
+      } else {
+        row.append(dot, lbl);
+      }
+      tList.appendChild(row);
+    });
+    if (data.tasks.length > 8) {
+      const more = document.createElement('div');
+      more.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--text-faint);padding-left:12px';
+      more.textContent = `+ ${data.tasks.length - 8} more`;
+      tList.appendChild(more);
+    }
+    container.appendChild(tList);
+  }
+
+  // PRs
+  container.appendChild(_todayRow('⎇', 'open PRs', data.pr_count));
+  if (data.prs && data.prs.length) {
+    const prList = document.createElement('div');
+    prList.style.cssText = 'display:flex;flex-direction:column;gap:3px;padding-left:16px';
+    data.prs.slice(0, 5).forEach(pr => {
+      const row = document.createElement('div');
+      row.style.cssText = 'font-family:var(--mono);font-size:11px;color:var(--teal-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      row.textContent = `⎇ ${pr.title || pr.url || JSON.stringify(pr)}`;
+      prList.appendChild(row);
+    });
+    container.appendChild(prList);
+  }
+
+  // Events
+  if (data.events && data.events.length) {
+    container.appendChild(_todayRow('⬡', 'recent activity', data.events.length));
+  }
+
+  body.appendChild(container);
+}
+
+/* ---- /countdown — track future dates ---- */
+async function handleCountdown(arg) {
+  // subcommand: add YYYY-MM-DD label text
+  const addMatch = arg.match(/^add\s+(\d{4}-\d{2}-\d{2})\s+(.+)$/i);
+  if (addMatch) {
+    const [, dateStr, label] = addMatch;
+    const list = loadCountdowns();
+    const exists = list.find(c => c.label.toLowerCase() === label.toLowerCase());
+    if (exists) { exists.date = dateStr; }
+    else { list.push({ date: dateStr, label: label.trim() }); }
+    saveCountdowns(list);
+    render('');
+
+    const card = makeCard('/countdown add', '⧗ Countdown', true);
+    card.classList.remove('loading');
+    threadList.appendChild(card);
+    thread.classList.add('visible');
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    filterInput.value = '';
+
+    const n = card.dataset.n;
+    const body = document.getElementById(`ex-${n}-body`);
+    body.className = 'exchange-body';
+    const days = _daysUntil(dateStr);
+    const dayLabel = days === 0 ? 'today' : days < 0 ? `${Math.abs(days)} days ago` : `in ${days} days`;
+    body.innerHTML =
+      `<span style="font-family:var(--mono);font-size:13px;color:var(--teal)">⧗ ${esc(label.trim())}</span>` +
+      `<span style="font-family:var(--mono);font-size:11px;color:var(--text-dim);display:block;margin-top:4px">${dateStr} · ${dayLabel}</span>`;
+    return;
+  }
+
+  // subcommand: rm / remove <label>
+  const rmMatch = arg.match(/^(?:rm|remove)\s+(.+)$/i);
+  if (rmMatch) {
+    const label = rmMatch[1].trim();
+    const before = loadCountdowns();
+    const after = before.filter(c => c.label.toLowerCase() !== label.toLowerCase());
+    saveCountdowns(after);
+    render('');
+
+    const card = makeCard('/countdown rm', '⧗ Countdown', true);
+    card.classList.remove('loading');
+    threadList.appendChild(card);
+    thread.classList.add('visible');
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    filterInput.value = '';
+
+    const n = card.dataset.n;
+    const body = document.getElementById(`ex-${n}-body`);
+    body.className = 'exchange-body';
+    const removed = before.length - after.length;
+    body.innerHTML = removed
+      ? `<span style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">Removed <strong>${esc(label)}</strong>.</span>`
+      : `<span style="font-family:var(--mono);font-size:12px;color:var(--text-faint)">No countdown named "${esc(label)}" found.</span>`;
+    return;
+  }
+
+  // bare /countdown — list all
+  const card = makeCard('/countdown', '⧗ Countdowns', true);
+  card.classList.remove('loading');
+  threadList.appendChild(card);
+  thread.classList.add('visible');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  filterInput.value = '';
+
+  const n = card.dataset.n;
+  const body = document.getElementById(`ex-${n}-body`);
+  body.className = 'exchange-body';
+
+  const list = loadCountdowns().sort((a, b) => a.date.localeCompare(b.date));
+  if (!list.length) {
+    body.innerHTML =
+      `<span style="font-family:var(--mono);font-size:12px;color:var(--text-faint)">No countdowns yet.</span>` +
+      `<span style="font-family:var(--mono);font-size:11px;color:var(--text-faint);display:block;margin-top:6px">` +
+      `Add one: <code>/countdown add 2026-12-25 Christmas</code></span>`;
+    return;
+  }
+
+  const container = document.createElement('div');
+  container.style.cssText = 'display:flex;flex-direction:column;gap:6px';
+  list.forEach(cd => {
+    const days = _daysUntil(cd.date);
+    const color = days < 0 ? 'var(--text-faint)' : days <= 3 ? 'var(--amber)' : days <= 14 ? '#e0a54f99' : 'var(--teal)';
+    const dayLabel = days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'today' : `${days}d`;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px';
+    row.innerHTML =
+      `<span style="font-size:14px;font-weight:600;color:${color};min-width:54px">${dayLabel}</span>` +
+      `<span style="color:var(--text-dim);flex:1">${esc(cd.label)}</span>` +
+      `<span style="color:var(--text-faint);font-size:10px">${cd.date}</span>`;
+    container.appendChild(row);
+  });
+  body.appendChild(container);
+
+  const foot = document.getElementById(`ex-${n}-foot`);
+  const hint = document.createElement('span');
+  hint.style.cssText = 'font-family:var(--mono);font-size:10px;color:var(--text-faint)';
+  hint.textContent = '/countdown rm <label> to remove · /countdown add YYYY-MM-DD <label> to add';
+  foot.appendChild(hint);
+}
+
 /* ---- keyboard help overlay ---- */
 const kbdHelp = document.getElementById('kbd-help');
 function toggleHelp(show) {
@@ -3356,6 +3603,20 @@ const focusTimerState = { intervalId: null, secondsLeft: 0, phase: 'idle', total
 
 /* ---- focus session persistence ---- */
 const SESSIONS_LS = 'jarvis_sessions';
+const COUNTDOWNS_LS = 'jarvis_countdowns';
+
+function loadCountdowns() {
+  try { return JSON.parse(localStorage.getItem(COUNTDOWNS_LS) || '[]'); } catch { return []; }
+}
+function saveCountdowns(list) {
+  try { localStorage.setItem(COUNTDOWNS_LS, JSON.stringify(list)); } catch {}
+}
+function _daysUntil(dateStr) {
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const tgt = new Date(dateStr + 'T00:00:00'); tgt.setHours(0, 0, 0, 0);
+  return Math.round((tgt - now) / 86400000);
+}
+
 function saveFocusSession(durationMins) {
   try {
     const list = JSON.parse(localStorage.getItem(SESSIONS_LS) || '[]');
