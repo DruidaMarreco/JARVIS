@@ -75,6 +75,45 @@ async def open_prs(limit: int = 10) -> list[dict]:
         return []
 
 
+async def search_repos(query: str, limit: int = 6) -> list[dict]:
+    """Search GitHub repositories matching `query`, most-recently-updated first.
+
+    Each item: {name, full_name, description, url, stars, updated, language, private}.
+    Includes a Bearer token when ``GITHUB_TOKEN`` env-var is set (raises rate limit
+    from 10 to 30 requests/minute).  Returns an empty list on any failure.
+    """
+    if not query.strip():
+        return []
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    headers = {**_HEADERS}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(
+                f"{_API}/search/repositories",
+                headers=headers,
+                params={"q": query, "per_page": min(limit, 30), "sort": "updated"},
+            )
+            r.raise_for_status()
+            return [
+                {
+                    "name": item["name"],
+                    "full_name": item["full_name"],
+                    "description": item.get("description") or "",
+                    "url": item["html_url"],
+                    "stars": item.get("stargazers_count", 0),
+                    "updated": (item.get("updated_at") or "")[:10],
+                    "language": item.get("language") or "",
+                    "private": item.get("private", False),
+                }
+                for item in r.json().get("items", [])[:limit]
+            ]
+    except Exception as exc:
+        _log.warning("github.search_repos(%r) failed: %s", query, exc)
+        return []
+
+
 async def recent_activity(limit: int = 3) -> list[str]:
     """Return a compact list of recent GitHub activity strings (push/PR events).
 
